@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Log In - Construction Management Platform{% endblock %}
+
+{% block content %}
+<div class="login-container">
+    <h1>Construction Management Platform</h1>
+    <h2>Log In</h2>
+
+    {% if form.errors %}
+    <p class="error">Invalid username or password.</p>
+    {% endif %}
+
+    <form method="post">
+        {% csrf_token %}
+        <div class="form-group">
+            <label for="id_username">Username</label>
+            {{ form.username }}
+        </div>
+        <div class="form-group">
+            <label for="id_password">Password</label>
+            {{ form.password }}
+        </div>
+        <button type="submit">Log In</button>
+    </form>
+
+    <div class="demo-accounts">
+        <h3>Demo Accounts</h3>
+        <table>
+            <thead>
+                <tr><th>Username</th><th>Password</th><th>Role</th></tr>
+            </thead>
+            <tbody>
+                <tr><td><code>admin</code></td><td><code>admin</code></td><td>Superuser - full admin access</td></tr>
+                <tr><td><code>firm_user</code></td><td><code>firm_user</code></td><td>Employee of Apex Construction</td></tr>
+                <tr><td><code>subcontractor_user</code></td><td><code>subcontractor_user</code></td><td>Employee of Summit Electrical</td></tr>
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

@@ -1,0 +1,4741 @@
+# django-stratagem - Complete Documentation
+
+> Registry-based plugin architecture for Django. Define registries of
+> implementations that are auto-discovered at startup, stored in model fields,
+> and exposed through forms, admin, DRF, and template tags. Supports
+> conditional availability, hierarchical registries, and third-party plugins.
+
+---
+
+<!-- source: docs/quickstart.md -->
+
+# Getting Started
+
+## Installation
+
+Install django-stratagem with pip:
+
+```bash
+pip install django-stratagem
+```
+
+Add `django_stratagem` to your `INSTALLED_APPS`:
+
+```python
+INSTALLED_APPS = [
+    "django_stratagem",
+    # ...
+]
+```
+
+### Requirements
+
+- Python 3.10+
+- Django 4.2+
+
+For DRF integration, install the optional extra:
+
+```bash
+pip install django-stratagem[drf]
+```
+
+## Core Concepts
+
+The main pieces are a **Registry** (holds a set of implementations), an **Interface** (the base class implementations extend), **implementations** (concrete classes with a `slug`), and **auto-discovery** (imports them at startup). You define a registry by subclassing `Registry` and setting `implementations_module` to name the module where implementations live. Each implementation subclasses your `Interface`, sets a unique `slug`, and optionally provides `description`, `icon`, and `priority`. On app startup, django-stratagem calls `autodiscover_modules()` for each registry's `implementations_module`, importing and registering everything automatically.
+
+```{mermaid}
+classDiagram
+    class Registry {
+        implementations_module = "notifications"
+        get(slug)
+        get_choices()
+    }
+    class Interface {
+        registry = NotificationRegistry
+        send(message, recipient)*
+    }
+    class EmailNotification {
+        slug = "email"
+        send(message, recipient)
+    }
+    class SMSNotification {
+        slug = "sms"
+        send(message, recipient)
+    }
+    Registry "1" *-- "*" Interface : holds
+    Interface <|-- EmailNotification
+    Interface <|-- SMSNotification
+```
+
+## Your First Registry
+
+### 1. Define the Registry and Interface
+
+Create a registry module in your app:
+
+```python
+# myapp/registry.py
+from django_stratagem import Registry, Interface
+
+class NotificationRegistry(Registry):
+    implementations_module = "notifications"
+
+class NotificationInterface(Interface):
+    registry = NotificationRegistry
+
+    def send(self, message: str, recipient: str) -> bool:
+        raise NotImplementedError
+```
+
+### 2. Create Implementations
+
+Create the implementations module matching `implementations_module`:
+
+```python
+# myapp/notifications.py
+from myapp.registry import NotificationInterface
+
+class EmailNotification(NotificationInterface):
+    slug = "email"
+    description = "Send notifications via email"
+    priority = 10
+
+    def send(self, message, recipient):
+        # send email...
+        return True
+
+class SMSNotification(NotificationInterface):
+    slug = "sms"
+    description = "Send notifications via SMS"
+    priority = 20
+
+    def send(self, message, recipient):
+        # send SMS...
+        return True
+```
+
+Implementations are auto-registered when their module is imported. django-stratagem discovers them automatically via `autodiscover_modules("notifications")` on app startup.
+
+### File Layout
+
+```
+myapp/
+├── __init__.py
+├── registry.py           # Registry + Interface
+├── notifications.py      # Implementations (matches implementations_module)
+├── models.py
+└── ...
+```
+
+### What happens at startup
+
+When Django starts, django-stratagem finds your registries, imports the implementation modules, and populates model field choices - all before the first request is served.
+
+```{mermaid}
+flowchart LR
+    A[Django starts] --> B[Discover registries]
+    B --> C["Import each registry's implementations_module"]
+    C --> D[Classes register themselves via __init_subclass__]
+    D --> E[Model field choices are populated]
+```
+
+For the full startup lifecycle, including migration safety and plugin loading, see [How Auto-Discovery Works](explanation.md#how-auto-discovery-works).
+
+## Using the Registry
+
+Once registered, you interact with implementations through the registry:
+
+```python
+from myapp.registry import NotificationRegistry
+
+# Iterate over all registered implementation classes
+for impl_class in NotificationRegistry:
+    print(impl_class.slug)
+
+# Get an instance by slug
+impl = NotificationRegistry.get(slug="email")
+impl.send("Hello!", "user@example.com")
+
+# Get the class without instantiation
+cls = NotificationRegistry.get_class(slug="email")
+
+# Safe get with fallback
+impl = NotificationRegistry.get_or_default(slug="nonexistent", default="email")
+
+# Get choices for forms (list of (slug, label) tuples)
+choices = NotificationRegistry.get_choices()
+# [("email", "Email Notification"), ("sms", "SMS Notification")]
+
+# Membership check
+"email" in NotificationRegistry  # True
+
+# Count implementations
+len(NotificationRegistry)  # 2
+```
+
+## Using in Models
+
+django-stratagem provides model fields that store references to registry implementations in the database.
+
+### `choices_field()` - Store a Class Reference
+
+```python
+from django.db import models
+from myapp.registry import NotificationRegistry
+
+class NotificationConfig(models.Model):
+    # Stores the class; accessing the field returns the class
+    strategy = NotificationRegistry.choices_field()
+```
+
+```python
+config = NotificationConfig()
+config.strategy = EmailNotification  # Set by class
+config.strategy = "email"            # Or by slug
+config.save()
+
+config.strategy  # Returns the EmailNotification class
+```
+
+### `instance_field()` - Store and Instantiate
+
+```python
+class NotificationConfig(models.Model):
+    # Stores the class; accessing the field returns an instance
+    strategy = NotificationRegistry.instance_field()
+```
+
+```python
+config = NotificationConfig.objects.get(pk=1)
+config.strategy.send("Hello!", "user@example.com")  # Already an instance
+```
+
+See [How to Use Model Fields](howto-fields.md) for all field types and options.
+
+## Exposing Options to Users
+
+The model fields above are enough to store a selection, but the real point is giving your users a way to pick one. django-stratagem plugs into forms, the admin, and DRF so the choices show up automatically.
+
+### Forms
+
+Registry model fields produce form dropdowns by default. You can also use `RegistryFormField` directly:
+
+```python
+from django_stratagem import RegistryFormField
+
+class NotificationConfigForm(forms.Form):
+    strategy = RegistryFormField(registry=NotificationRegistry)
+```
+
+The user sees a `<select>` with your registered implementations as options. See [How to Use Forms, Widgets, and the Admin](howto-forms-admin.md) for context-aware filtering and hierarchical fields.
+
+### Admin
+
+One mixin gives you dropdowns and list filters with no extra work:
+
+```python
+from django.contrib import admin
+from django_stratagem.admin import ContextAwareRegistryAdmin
+
+@admin.register(NotificationConfig)
+class NotificationConfigAdmin(ContextAwareRegistryAdmin):
+    pass
+```
+
+This automatically filters choices based on the logged-in admin's permissions when you're using [conditional availability](howto-conditions.md). See [How to Use Forms, Widgets, and the Admin](howto-forms-admin.md#django-admin) for hierarchical admin support and dashboard views.
+
+### DRF
+
+If you're building an API, install the optional `drf` extra and use `DrfRegistryField`:
+
+```python
+from rest_framework import serializers
+from django_stratagem.drf.serializers import DrfRegistryField
+
+class NotificationConfigSerializer(serializers.Serializer):
+    strategy = DrfRegistryField(registry=NotificationRegistry)
+```
+
+Accepts slugs as input, validates against the registry, and serializes back to slugs. See [How to Use DRF Integration](howto-drf.md) for multiple-choice fields and the built-in API views.
+
+## Configuration
+
+Configure django-stratagem via the `DJANGO_STRATAGEM` dict in your Django settings:
+
+```python
+# settings.py
+DJANGO_STRATAGEM = {
+    "CACHE_TIMEOUT": 300,           # Cache TTL in seconds (default: 300)
+    "SKIP_DURING_MIGRATIONS": True,  # Skip registry ops during migrations (default: True)
+    "ENABLED_PLUGINS": None,         # List of enabled plugin names, or None for all
+    "DISABLED_PLUGINS": [],          # List of disabled plugin names
+}
+```
+
+---
+
+<!-- source: docs/tutorial.md -->
+
+# Building a Complete Feature
+
+This tutorial picks up where the [Getting Started](quickstart.md) guide left off. You already have a `NotificationRegistry` with `EmailNotification` and `SMSNotification`. Now you'll add conditional availability, hierarchical sub-registries, a plugin, and signals.
+
+## Prerequisites
+
+You should have the basic notification registry working from the [Getting Started](quickstart.md) guide:
+
+```python
+# myapp/registry.py
+from django_stratagem import Registry, Interface
+
+class NotificationRegistry(Registry):
+    implementations_module = "notifications"
+
+class NotificationInterface(Interface):
+    registry = NotificationRegistry
+
+    def send(self, message: str, recipient: str) -> bool:
+        raise NotImplementedError
+```
+
+```python
+# myapp/notifications.py
+from myapp.registry import NotificationInterface
+
+class EmailNotification(NotificationInterface):
+    slug = "email"
+    description = "Send notifications via email"
+    priority = 10
+
+    def send(self, message, recipient):
+        # send email...
+        return True
+
+class SMSNotification(NotificationInterface):
+    slug = "sms"
+    description = "Send notifications via SMS"
+    priority = 20
+
+    def send(self, message, recipient):
+        # send SMS...
+        return True
+```
+
+## Step 1: Add Conditional Availability
+
+Some notification channels should only be available to certain users. For example, push notifications might require a specific permission.
+
+### Create a conditional implementation
+
+Add a `PushNotification` that requires the `myapp.use_push` permission:
+
+```python
+# myapp/notifications.py
+from django_stratagem import ConditionalInterface, PermissionCondition
+from myapp.registry import NotificationRegistry
+
+class PushNotification(ConditionalInterface):
+    registry = NotificationRegistry
+    slug = "push"
+    description = "Send push notifications"
+    priority = 30
+    condition = PermissionCondition("myapp.use_push")
+
+    def send(self, message, recipient):
+        # send push notification...
+        return True
+```
+
+`ConditionalInterface` works just like `Interface`, but adds a `condition` attribute that controls when the implementation is available.
+
+### Test with different user contexts
+
+```python
+from myapp.registry import NotificationRegistry
+
+# A regular user without the permission
+context = {"user": regular_user}
+available = NotificationRegistry.get_available_implementations(context)
+# {"email": <class EmailNotification>, "sms": <class SMSNotification>}
+# push is NOT included
+
+# An admin user with the permission
+context = {"user": admin_user}
+available = NotificationRegistry.get_available_implementations(context)
+# {"email": ..., "sms": ..., "push": <class PushNotification>}
+```
+
+You can compose conditions with `&`, `|`, and `~` for more complex rules. See [How to Use Conditional Availability](howto-conditions.md) for all built-in conditions and composition patterns.
+
+## Step 2: Add a Hierarchical Sub-Registry
+
+Suppose each notification channel has sub-options - for email, you might choose HTML or plain text format; for SMS, you might choose a provider. Hierarchical registries model these parent-child relationships.
+
+### Define the child registry
+
+```python
+# myapp/registry.py
+from django_stratagem import Registry, Interface, HierarchicalRegistry, HierarchicalInterface
+
+class NotificationRegistry(Registry):
+    implementations_module = "notifications"
+
+class NotificationInterface(Interface):
+    registry = NotificationRegistry
+
+    def send(self, message: str, recipient: str) -> bool:
+        raise NotImplementedError
+
+class NotificationFormatRegistry(HierarchicalRegistry):
+    implementations_module = "notification_formats"
+    parent_registry = NotificationRegistry
+```
+
+### Create child implementations
+
+```python
+# myapp/notification_formats.py
+from django_stratagem import HierarchicalInterface
+from myapp.registry import NotificationFormatRegistry
+
+class HTMLEmail(HierarchicalInterface):
+    registry = NotificationFormatRegistry
+    slug = "html_email"
+    description = "Rich HTML email"
+    parent_slug = "email"  # Only valid under EmailNotification
+
+class PlainTextEmail(HierarchicalInterface):
+    registry = NotificationFormatRegistry
+    slug = "plain_text_email"
+    description = "Plain text email"
+    parent_slug = "email"
+
+class TwilioSMS(HierarchicalInterface):
+    registry = NotificationFormatRegistry
+    slug = "twilio_sms"
+    description = "SMS via Twilio"
+    parent_slug = "sms"
+```
+
+### Query filtered by parent
+
+```python
+from myapp.registry import NotificationFormatRegistry
+
+# Get formats available for email
+formats = NotificationFormatRegistry.get_children_for_parent("email")
+# {"html_email": <class HTMLEmail>, "plain_text_email": <class PlainTextEmail>}
+
+# Get choices for a form dropdown filtered by parent
+choices = NotificationFormatRegistry.get_choices_for_parent("email")
+# [("html_email", "HTML Email"), ("plain_text_email", "Plain Text Email")]
+```
+
+### Use in a model
+
+```python
+# myapp/models.py
+from django.db import models
+from django_stratagem import HierarchicalRegistryField
+from myapp.registry import NotificationRegistry, NotificationFormatRegistry
+
+class NotificationConfig(models.Model):
+    channel = NotificationRegistry.choices_field()
+    format = HierarchicalRegistryField(
+        registry=NotificationFormatRegistry,
+        parent_field="channel",
+    )
+```
+
+The `parent_field` parameter tells the field to validate that the selected format is valid for the selected channel. See [How to Use Hierarchical Registries](howto-hierarchies.md) for more.
+
+## Step 3: Write a Simple Plugin
+
+Plugins let third-party packages add implementations to your registry without modifying your code. We'll create a webhook notification as a plugin.
+
+### Create the implementation
+
+```python
+# django_webhook_notifications/notifications.py
+from myapp.registry import NotificationInterface
+
+class WebhookNotification(NotificationInterface):
+    slug = "webhook"
+    description = "Send notifications via webhook"
+    priority = 50
+
+    def send(self, message, recipient):
+        # POST to webhook URL...
+        return True
+```
+
+### Create plugin metadata
+
+```python
+# django_webhook_notifications/stratagem_plugin.py
+
+__version__ = "1.0.0"
+
+REGISTRY = "NotificationRegistry"
+
+IMPLEMENTATIONS = [
+    "django_webhook_notifications.notifications.WebhookNotification",
+]
+```
+
+### Register the entry point
+
+In the plugin's `pyproject.toml`:
+
+```toml
+[project.entry-points."django_stratagem.plugins"]
+webhook_notifications = "django_webhook_notifications.stratagem_plugin"
+```
+
+Once installed, the webhook option appears in `NotificationRegistry` automatically - in forms, admin, and API responses. See [How to Use the Plugin System](howto-plugins.md) for more on plugin development.
+
+## Step 4: React to Registrations with Signals
+
+django-stratagem emits signals when implementations are registered, unregistered, or when a registry is reloaded. Use them for logging, cache invalidation, or other side effects.
+
+### Log registrations
+
+```python
+# myapp/signals.py
+from django.dispatch import receiver
+from django_stratagem.signals import implementation_registered
+
+@receiver(implementation_registered)
+def log_registration(sender, registry, implementation, **kwargs):
+    import logging
+    logger = logging.getLogger("django_stratagem")
+    logger.info(
+        "Registered %s in %s",
+        implementation.slug,
+        registry.__name__,
+    )
+```
+
+Make sure this module is imported at startup - for example, in your `AppConfig.ready()`:
+
+```python
+# myapp/apps.py
+from django.apps import AppConfig
+
+class MyAppConfig(AppConfig):
+    name = "myapp"
+
+    def ready(self):
+        import myapp.signals  # noqa: F401
+```
+
+For more signal patterns (cache invalidation, audit trails) and the full list of extension hooks, see [Extension Hooks and Customization Points](hooks.md).
+
+## Step 5: Wire It All Up
+
+Now combine everything into an admin view and a form.
+
+### Admin
+
+```python
+# myapp/admin.py
+from django.contrib import admin
+from django_stratagem.admin import HierarchicalRegistryAdmin
+from myapp.models import NotificationConfig
+
+@admin.register(NotificationConfig)
+class NotificationConfigAdmin(HierarchicalRegistryAdmin):
+    pass
+```
+
+`HierarchicalRegistryAdmin` handles both conditional filtering (based on the logged-in admin's permissions) and hierarchical field relationships. See [How to Use Forms, Widgets, and the Admin](howto-forms-admin.md).
+
+### Form
+
+```python
+# myapp/forms.py
+from django import forms
+from django_stratagem import (
+    ContextAwareRegistryFormField,
+    HierarchicalRegistryFormField,
+    RegistryContextMixin,
+    HierarchicalFormMixin,
+)
+from myapp.registry import NotificationRegistry, NotificationFormatRegistry
+
+class NotificationConfigForm(
+    RegistryContextMixin,
+    HierarchicalFormMixin,
+    forms.Form,
+):
+    channel = ContextAwareRegistryFormField(registry=NotificationRegistry)
+    format = HierarchicalRegistryFormField(
+        registry=NotificationFormatRegistry,
+        parent_field="channel",
+    )
+
+# Usage in a view:
+form = NotificationConfigForm(
+    registry_context={"user": request.user, "request": request},
+)
+```
+
+### Template
+
+```html
+{% load stratagem %}
+
+<h2>Available Notification Channels</h2>
+{% get_implementations notification_registry request_context as channels %}
+{% for slug, impl in channels.items %}
+    <div class="channel">
+        <strong>{{ impl|display_name }}</strong>
+        <p>{{ impl|registry_description }}</p>
+        {% if impl|is_available:request_context %}
+            <span class="badge">Available</span>
+        {% endif %}
+    </div>
+{% endfor %}
+```
+
+See [How to Use Template Tags and Filters](howto-templates.md) for the full list of tags and filters.
+
+## What's Next
+
+That covers the main intermediate features. The how-to guides go deeper on each topic:
+
+- [How to Use Model Fields](howto-fields.md) - all field types, lookups, factory patterns
+- [How to Use Forms, Widgets, and the Admin](howto-forms-admin.md) - form fields, widgets, admin classes
+- [How to Use Conditional Availability](howto-conditions.md) - all built-in conditions, composition, custom conditions
+- [How to Use Hierarchical Registries](howto-hierarchies.md) - parent-child relationships
+- [How to Use DRF Integration](howto-drf.md) - serializer fields and API views
+- [How to Use the Plugin System](howto-plugins.md) - writing and using plugins
+- [Extension Hooks and Customization Points](hooks.md) - hooks, signals, testing extensions
+- [Architecture and Design](explanation.md) - how auto-discovery works, design decisions
+
+---
+
+<!-- source: docs/tutorial-construction.md -->
+
+# Construction Management Platform
+
+This tutorial builds a multi-tenant construction management platform using django-stratagem. It covers nearly every feature of the library - not as a feature demo, but because each one solves a real problem the scenario demands.
+
+:::{tip}
+A complete, runnable version of this project lives in `example/` at the repository root. You can clone the repo, run `uv run python example/manage.py migrate && uv run python example/manage.py create_sample_data`, and start exploring immediately. The code blocks below are excerpts from the example files - each one references the corresponding `example/` path.
+
+The seed command creates three demo accounts:
+
+| Username | Password | Role |
+|---|---|---|
+| `admin` | `admin` | Superuser - full admin access |
+| `firm_user` | `firm_user` | Employee of Apex Construction (US, professional plan) |
+| `subcontractor_user` | `subcontractor_user` | Employee of Summit Electrical (subcontractor under Apex) |
+:::
+
+## What you'll build
+
+A white-label SaaS platform where **construction management firms** subscribe to manage their **subcontractor** companies. Different firms operate in different regions, subscribe to different plans, and need different compliance rules, onboarding workflows, billing models, and scheduling strategies.
+
+By the end you'll have four Django apps (`platform_core`, `compliance`, `onboarding`, `billing`) wired together with registries, conditional availability, hierarchical relationships, admin integration, templates, an API layer, signals, hooks, and a third-party plugin.
+
+### Prerequisites
+
+You should have completed the [Getting Started](quickstart.md) guide and be comfortable with Django models, apps, and class-based views.
+
+## 1. The Data Model
+
+Start with the core models. No registries yet - just plain Django.
+
+```python
+# platform_core/models.py
+from django.contrib.auth.models import User
+from django.db import models
+
+
+class Firm(models.Model):
+    """A construction management firm that subscribes to the platform."""
+
+    name = models.CharField(max_length=200)
+    region = models.CharField(
+        max_length=50,
+        choices=[
+            ("us", "United States"),
+            ("uk", "United Kingdom"),
+            ("au", "Australia"),
+        ],
+    )
+    plan = models.CharField(
+        max_length=20,
+        choices=[
+            ("starter", "Starter"),
+            ("professional", "Professional"),
+            ("enterprise", "Enterprise"),
+        ],
+    )
+
+    def __str__(self):
+        return self.name
+
+
+class Subcontractor(models.Model):
+    """A subcontractor company managed by a firm."""
+
+    firm = models.ForeignKey(Firm, on_delete=models.CASCADE, related_name="subcontractors")
+    name = models.CharField(max_length=200)
+    trade = models.CharField(max_length=100)
+    is_active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return f"{self.name} ({self.trade})"
+
+
+class Employee(models.Model):
+    """An employee of a firm who uses the platform."""
+
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    firm = models.ForeignKey(Firm, on_delete=models.CASCADE, related_name="employees")
+    role = models.CharField(
+        max_length=30,
+        choices=[
+            ("admin", "Firm Administrator"),
+            ("manager", "Project Manager"),
+            ("coordinator", "Safety Coordinator"),
+        ],
+    )
+
+    def __str__(self):
+        return f"{self.user.get_full_name()} - {self.get_role_display()}"
+
+
+class SubcontractorEmployee(models.Model):
+    """A user who works for a subcontractor company."""
+
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    subcontractor = models.ForeignKey(Subcontractor, on_delete=models.CASCADE, related_name="employees")
+    role = models.CharField(
+        max_length=30,
+        choices=[
+            ("foreman", "Foreman"),
+            ("worker", "Field Worker"),
+            ("safety_officer", "Safety Officer"),
+        ],
+    )
+
+    def __str__(self):
+        return f"{self.user.get_full_name()} - {self.get_role_display()}"
+```
+
+The relationships form a B2B2B chain:
+
+```{mermaid}
+erDiagram
+    Platform ||--o{ Firm : hosts
+    Firm ||--o{ Subcontractor : manages
+    Firm ||--o{ Employee : employs
+    Employee }o--|| User : "has account"
+    Subcontractor ||--o{ SubcontractorEmployee : employs
+    SubcontractorEmployee }o--|| User : "has account"
+```
+
+The problem appears immediately: a US firm must file OSHA compliance reports, a UK firm follows HSE rules, and an Australian firm uses SafeWork standards. You could add `if/elif` branches everywhere, but that scatters business logic across the codebase and makes adding a new region painful.
+
+## 2. Compliance Reporting
+
+This is exactly what registries solve. Define a `ComplianceRegistry`, create an interface, and write one class per compliance standard.
+
+### Define the registry and interface
+
+```python
+# compliance/registry.py
+from django_stratagem import Registry, Interface
+
+
+class ComplianceRegistry(Registry):
+    implementations_module = "compliance_reports"
+
+
+class ComplianceInterface(Interface):
+    registry = ComplianceRegistry
+
+    def __init__(self, **kwargs):
+        self.region = kwargs.get("region")
+
+    def generate_report(self, subcontractor, period):
+        """Generate a compliance report for the given subcontractor and period."""
+        raise NotImplementedError
+
+    def get_requirements(self):
+        """Return a list of compliance requirements."""
+        raise NotImplementedError
+```
+
+`implementations_module = "compliance_reports"` tells django-stratagem to look for a `compliance_reports.py` module in every installed app during autodiscovery. The `__init__` method accepts `**kwargs` so the factory pattern in section 3 can inject `region`.
+
+### Create implementations
+
+```python
+# compliance/compliance_reports.py
+from compliance.registry import ComplianceInterface
+
+
+class OshaCompliance(ComplianceInterface):
+    slug = "osha"
+    description = "U.S. OSHA safety reporting"
+    icon = "us-flag"
+    priority = 10
+    certification_body = "OSHA"
+    last_audit = "2025-12-15"
+
+    def generate_report(self, subcontractor, period):
+        return {
+            "standard": "OSHA 29 CFR 1926",
+            "subcontractor": subcontractor.name,
+            "period": str(period),
+            "sections": ["fall_protection", "scaffolding", "electrical"],
+        }
+
+    def get_requirements(self):
+        return ["OSHA 10-hour card", "Site-specific safety plan", "Weekly toolbox talks"]
+
+
+class HseCompliance(ComplianceInterface):
+    slug = "hse"
+    description = "UK Health and Safety Executive reporting"
+    icon = "uk-flag"
+    priority = 20
+    certification_body = "HSE"
+    last_audit = "2025-11-20"
+
+    def generate_report(self, subcontractor, period):
+        return {
+            "standard": "HSE CDM 2015",
+            "subcontractor": subcontractor.name,
+            "period": str(period),
+            "sections": ["risk_assessment", "method_statement", "coshh"],
+        }
+
+    def get_requirements(self):
+        return ["CSCS card", "RAMS documentation", "COSHH assessments"]
+
+
+class SafeWorkCompliance(ComplianceInterface):
+    slug = "safework"
+    description = "SafeWork Australia reporting"
+    icon = "au-flag"
+    priority = 30
+    certification_body = "SafeWork Australia"
+    last_audit = "2025-10-05"
+
+    def generate_report(self, subcontractor, period):
+        return {
+            "standard": "WHS Act 2011",
+            "subcontractor": subcontractor.name,
+            "period": str(period),
+            "sections": ["swms", "risk_register", "incident_log"],
+        }
+
+    def get_requirements(self):
+        return ["White Card", "SWMS for high-risk work", "Safety data sheets"]
+```
+
+Each class sets a unique `slug`, a human-readable `description`, and implements the interface methods. When Django starts, autodiscovery imports this module and the classes register themselves automatically.
+
+```{mermaid}
+flowchart LR
+    A[Django starts] --> B[discover_registries]
+    B --> C["Import compliance_reports modules"]
+    C --> D["OshaCompliance, HseCompliance, SafeWorkCompliance register via __init_subclass__"]
+    D --> E[Model field choices updated]
+```
+
+### Use the registry
+
+```python
+from compliance.registry import ComplianceRegistry
+
+# List everything registered
+for impl_class in ComplianceRegistry:
+    print(f"{impl_class.slug}: {impl_class.description}")
+
+# Get by slug
+osha = ComplianceRegistry.get(slug="osha")
+report = osha.generate_report(subcontractor, "2026-Q1")
+
+# Get the class without instantiating
+osha_class = ComplianceRegistry.get_class(slug="osha")
+
+# Safe fallback
+handler = ComplianceRegistry.get_or_default(slug="unknown", default="osha")
+
+# Choices for a form
+choices = ComplianceRegistry.get_choices()
+# [("osha", "Osha Compliance"), ("hse", "Hse Compliance"), ("safework", "Safe Work Compliance")]
+```
+
+:::{tip}
+Adding a fourth compliance standard (say, EU regulations) is one file with one class. No changes to existing code, no migration, no settings update.
+:::
+
+See [How Auto-Discovery Works](explanation.md#how-auto-discovery-works) for the full startup lifecycle.
+
+## 3. Storing Firm Configuration
+
+Firms need to persist their compliance choice in the database so the platform knows which standard to apply.
+
+### Add a registry field to the model
+
+```python
+# platform_core/models.py
+from django.db import models
+from compliance.registry import ComplianceRegistry
+
+
+class Firm(models.Model):
+    name = models.CharField(max_length=200)
+    region = models.CharField(max_length=50)
+    plan = models.CharField(max_length=20)
+
+    # Stores the class; accessing the field returns the class
+    compliance_strategy = ComplianceRegistry.choices_field()
+```
+
+`choices_field()` creates a `RegistryClassField` - a `CharField` that stores the fully qualified class name but returns the class on access:
+
+```python
+firm = Firm.objects.create(name="Apex Construction", region="us", plan="professional")
+firm.compliance_strategy = "osha"  # Set by slug
+firm.save()
+
+firm.compliance_strategy  # Returns <class 'OshaCompliance'>
+firm.compliance_strategy.get_requirements()
+# ["OSHA 10-hour card", "Site-specific safety plan", "Weekly toolbox talks"]
+```
+
+### Factory pattern for automatic instantiation
+
+If you want accessing the field to return a ready-to-use *instance* instead of the class, use `instance_field()` with a factory that injects the firm's data:
+
+```python
+# platform_core/models.py
+class Firm(models.Model):
+    # ...
+    compliance_handler = ComplianceRegistry.instance_field(
+        factory=lambda klass, obj: klass(region=obj.region),
+    )
+```
+
+Now `firm.compliance_handler` returns an instance with the firm's region already injected. See [Advanced Factory Patterns](howto-fields.md#advanced-factory-patterns) for dependency injection and singleton patterns.
+
+### Query with lookups
+
+Registry fields support custom lookups that convert classes and slugs to the stored FQN string automatically:
+
+```python
+from compliance.compliance_reports import OshaCompliance, HseCompliance
+
+# Filter by class
+us_firms = Firm.objects.filter(compliance_strategy=OshaCompliance)
+
+# Filter by slug
+us_firms = Firm.objects.filter(compliance_strategy="osha")
+
+# Filter with __in
+north_atlantic = Firm.objects.filter(compliance_strategy__in=[OshaCompliance, HseCompliance])
+```
+
+:::{tip}
+You can assign by class, by slug, or by fully qualified name. The field handles resolution in all three cases. See [Slug Resolution](howto-fields.md#slug-resolution) for the resolution order.
+:::
+
+See [How to Use Model Fields](howto-fields.md) for all field types and lookup details.
+
+## 4. Controlling Who Sees What
+
+Not every firm should see every onboarding workflow. Starter-plan firms get the basic workflow. Professional firms unlock guided onboarding. Enterprise firms - if the user also has the right permission - get a white-glove enterprise workflow.
+
+### Define the onboarding registry
+
+```python
+# onboarding/registry.py
+from django_stratagem import Registry, Interface
+
+
+class OnboardingRegistry(Registry):
+    implementations_module = "workflows"
+
+
+class OnboardingInterface(Interface):
+    registry = OnboardingRegistry
+
+    def run_workflow(self, subcontractor):
+        """Execute the onboarding workflow for a subcontractor."""
+        raise NotImplementedError
+
+    def get_steps(self):
+        """Return the list of steps in this workflow."""
+        raise NotImplementedError
+```
+
+### Write a custom condition
+
+The built-in conditions cover permissions and feature flags, but you need one that checks the firm's subscription plan. Subclass `Condition` and implement `is_met`:
+
+```python
+# onboarding/conditions.py
+from django_stratagem import Condition
+
+
+class PlanCondition(Condition):
+    """Check that the firm's plan is in the allowed list."""
+
+    def __init__(self, allowed_plans):
+        self.allowed_plans = allowed_plans
+
+    def is_met(self, context):
+        firm = context.get("firm")
+        if not firm:
+            return False
+        return firm.plan in self.allowed_plans
+
+    def explain(self):
+        return f"Firm plan must be one of: {', '.join(self.allowed_plans)}"
+```
+
+### Create conditional implementations
+
+```python
+# onboarding/workflows.py
+from django_stratagem import ConditionalInterface, PermissionCondition
+from onboarding.conditions import PlanCondition
+from onboarding.registry import OnboardingInterface, OnboardingRegistry
+
+
+class StandardOnboarding(OnboardingInterface):
+    slug = "standard"
+    description = "Basic document collection and verification"
+    priority = 10
+
+    def run_workflow(self, subcontractor):
+        return ["collect_documents", "verify_insurance", "approve"]
+
+    def get_steps(self):
+        return ["Document upload", "Insurance check", "Approval"]
+
+
+class GuidedOnboarding(ConditionalInterface):
+    registry = OnboardingRegistry
+    slug = "guided"
+    description = "Step-by-step guided onboarding with checklists"
+    priority = 20
+    condition = PlanCondition(["professional", "enterprise"])
+
+    def run_workflow(self, subcontractor):
+        return ["orientation", "collect_documents", "site_visit", "verify_insurance", "training", "approve"]
+
+    def get_steps(self):
+        return ["Orientation session", "Document upload", "Site visit", "Insurance check", "Safety training", "Approval"]
+
+
+class EnterpriseOnboarding(ConditionalInterface):
+    registry = OnboardingRegistry
+    slug = "enterprise"
+    description = "White-glove onboarding with dedicated coordinator"
+    priority = 30
+    condition = PlanCondition(["enterprise"]) & PermissionCondition("onboarding.use_enterprise")
+
+    def run_workflow(self, subcontractor):
+        return ["assign_coordinator", "orientation", "collect_documents", "background_check",
+                "site_visit", "verify_insurance", "training", "compliance_audit", "approve"]
+
+    def get_steps(self):
+        return ["Coordinator assignment", "Orientation", "Documents", "Background check",
+                "Site visit", "Insurance", "Training", "Compliance audit", "Approval"]
+```
+
+`StandardOnboarding` uses plain `Interface` - it is always available. `GuidedOnboarding` and `EnterpriseOnboarding` use `ConditionalInterface` with composed conditions. The `&` operator means both sides must pass.
+
+### Filter by context
+
+```python
+from onboarding.registry import OnboardingRegistry
+
+# Build context from the request
+context = {
+    "user": request.user,
+    "firm": request.user.employee.firm,
+    "request": request,
+}
+
+# Starter firm - only sees standard
+available = OnboardingRegistry.get_available_implementations(context)
+# {"standard": <class StandardOnboarding>}
+
+# Enterprise firm with permission - sees all three
+available = OnboardingRegistry.get_available_implementations(context)
+# {"standard": ..., "guided": ..., "enterprise": ...}
+
+# Get choices for a form dropdown, filtered by context
+choices = OnboardingRegistry.get_choices_for_context(context)
+```
+
+The decision flow looks like this:
+
+```{mermaid}
+flowchart TD
+    A[Request arrives] --> B{Authenticated?}
+    B -->|No| C[StandardOnboarding only]
+    B -->|Yes| D{Firm plan?}
+    D -->|Starter| C
+    D -->|Professional| E[Standard + Guided]
+    D -->|Enterprise| F{Has permission?}
+    F -->|No| E
+    F -->|Yes| G[Standard + Guided + Enterprise]
+```
+
+:::{tip}
+Conditions compose with `&` (AND), `|` (OR), and `~` (NOT). You can build arbitrarily complex rules from simple, testable building blocks. Each condition's `explain()` method returns a human-readable description for debugging.
+:::
+
+See [How to Use Conditional Availability](howto-conditions.md) for all built-in conditions and composition patterns.
+
+## 5. Hierarchical Billing
+
+Billing has a two-level structure: firms first pick a **billing model** (time-and-materials, fixed-price, or cost-plus), then choose an **invoicing strategy** that only makes sense under that model. You wouldn't offer milestone invoicing to a time-and-materials firm.
+
+### Define the parent registry
+
+```python
+# billing/registry.py
+from django_stratagem import Registry, Interface, HierarchicalRegistry, HierarchicalInterface
+
+
+class BillingModelRegistry(Registry):
+    implementations_module = "billing_models"
+
+
+class BillingModelInterface(Interface):
+    registry = BillingModelRegistry
+
+    def calculate_total(self, line_items):
+        raise NotImplementedError
+
+
+class InvoicingStrategyRegistry(HierarchicalRegistry):
+    implementations_module = "invoicing_strategies"
+    parent_registry = BillingModelRegistry
+
+
+class InvoicingStrategyInterface(HierarchicalInterface):
+    registry = InvoicingStrategyRegistry
+
+    def generate_invoice(self, firm, period):
+        raise NotImplementedError
+```
+
+`HierarchicalRegistry` links `InvoicingStrategyRegistry` to `BillingModelRegistry` as its parent. `HierarchicalInterface` adds the `parent_slug` attribute.
+
+### Create parent implementations
+
+```python
+# billing/billing_models.py
+from billing.registry import BillingModelInterface
+
+
+class TimeAndMaterials(BillingModelInterface):
+    slug = "time_and_materials"
+    description = "Bill for actual hours and materials used"
+    priority = 10
+
+    def calculate_total(self, line_items):
+        return sum(item["hours"] * item["rate"] + item.get("materials", 0) for item in line_items)
+
+
+class FixedPrice(BillingModelInterface):
+    slug = "fixed_price"
+    description = "Bill a pre-agreed fixed amount per milestone"
+    priority = 20
+
+    def calculate_total(self, line_items):
+        return sum(item["amount"] for item in line_items)
+
+
+class CostPlus(BillingModelInterface):
+    slug = "cost_plus"
+    description = "Bill actual costs plus a percentage markup"
+    priority = 30
+
+    def calculate_total(self, line_items):
+        base = sum(item["cost"] for item in line_items)
+        markup = sum(item["cost"] * item.get("markup_pct", 0.15) for item in line_items)
+        return base + markup
+```
+
+### Create child implementations
+
+Each invoicing strategy declares which billing model it belongs to via `parent_slug`:
+
+```python
+# billing/invoicing_strategies.py
+from billing.registry import InvoicingStrategyInterface
+
+
+class HourlyInvoicing(InvoicingStrategyInterface):
+    slug = "hourly"
+    description = "Invoice per hour worked"
+    parent_slug = "time_and_materials"
+
+    def generate_invoice(self, firm, period):
+        return {"type": "hourly", "firm": firm.name, "period": str(period)}
+
+
+class WeeklyInvoicing(InvoicingStrategyInterface):
+    slug = "weekly"
+    description = "Weekly consolidated invoice"
+    parent_slug = "time_and_materials"
+
+    def generate_invoice(self, firm, period):
+        return {"type": "weekly", "firm": firm.name, "period": str(period)}
+
+
+class MilestoneInvoicing(InvoicingStrategyInterface):
+    slug = "milestone"
+    description = "Invoice on milestone completion"
+    parent_slug = "fixed_price"
+
+    def generate_invoice(self, firm, period):
+        return {"type": "milestone", "firm": firm.name, "period": str(period)}
+
+
+class CompletionInvoicing(InvoicingStrategyInterface):
+    slug = "completion"
+    description = "Invoice on project completion"
+    parent_slug = "fixed_price"
+
+    def generate_invoice(self, firm, period):
+        return {"type": "completion", "firm": firm.name, "period": str(period)}
+
+
+class OpenBookInvoicing(InvoicingStrategyInterface):
+    slug = "open_book"
+    description = "Transparent cost breakdown with markup"
+    parent_slug = "cost_plus"
+
+    def generate_invoice(self, firm, period):
+        return {"type": "open_book", "firm": firm.name, "period": str(period)}
+
+
+class MonthlyReconciliation(InvoicingStrategyInterface):
+    slug = "monthly_reconciliation"
+    description = "Monthly cost reconciliation and settlement"
+    parent_slug = "cost_plus"
+
+    def generate_invoice(self, firm, period):
+        return {"type": "monthly_reconciliation", "firm": firm.name, "period": str(period)}
+```
+
+The hierarchy:
+
+```{mermaid}
+graph TD
+    BM[BillingModelRegistry]
+    TM["TimeAndMaterials"]
+    FP["FixedPrice"]
+    CP["CostPlus"]
+    BM --- TM
+    BM --- FP
+    BM --- CP
+    TM --> HI["HourlyInvoicing"]
+    TM --> WI["WeeklyInvoicing"]
+    FP --> MI["MilestoneInvoicing"]
+    FP --> CI["CompletionInvoicing"]
+    CP --> OB["OpenBookInvoicing"]
+    CP --> MR["MonthlyReconciliation"]
+```
+
+### Store in a model with parent validation
+
+```python
+# billing/models.py
+from django.db import models
+from django_stratagem import HierarchicalRegistryField
+from billing.registry import BillingModelRegistry, InvoicingStrategyRegistry
+from platform_core.models import Firm
+
+
+class BillingConfig(models.Model):
+    firm = models.OneToOneField(Firm, on_delete=models.CASCADE, related_name="billing_config")
+    billing_model = BillingModelRegistry.choices_field()
+    invoicing_strategy = HierarchicalRegistryField(
+        registry=InvoicingStrategyRegistry,
+        parent_field="billing_model",
+    )
+
+    def __str__(self):
+        return f"Billing config for {self.firm.name}"
+```
+
+`parent_field="billing_model"` tells the field to validate that the selected invoicing strategy is valid for the chosen billing model.
+
+### Query the hierarchy
+
+```python
+from billing.registry import InvoicingStrategyRegistry
+
+# Get strategies valid for time-and-materials
+children = InvoicingStrategyRegistry.get_children_for_parent("time_and_materials")
+# {"hourly": <class HourlyInvoicing>, "weekly": <class WeeklyInvoicing>}
+
+# Choices for a filtered dropdown
+choices = InvoicingStrategyRegistry.get_choices_for_parent("time_and_materials")
+# [("hourly", "Hourly Invoicing"), ("weekly", "Weekly Invoicing")]
+
+# Full hierarchy map
+hierarchy = InvoicingStrategyRegistry.get_hierarchy_map()
+# {
+#     "time_and_materials": ["hourly", "weekly"],
+#     "fixed_price": ["milestone", "completion"],
+#     "cost_plus": ["open_book", "monthly_reconciliation"],
+# }
+
+# Validate a specific relationship
+InvoicingStrategyRegistry.validate_parent_child_relationship("fixed_price", "milestone")  # True
+InvoicingStrategyRegistry.validate_parent_child_relationship("fixed_price", "hourly")  # False
+```
+
+:::{tip}
+A child implementation can belong to multiple parents by using `parent_slugs` (a list) instead of `parent_slug`. For example, a "FlatFeeInvoicing" strategy could work under both `fixed_price` and `cost_plus`.
+:::
+
+See [How to Use Hierarchical Registries](howto-hierarchies.md) for more on parent-child relationships and `RegistryRelationship`.
+
+## 6. Forms and Admin
+
+Platform admins need to configure firms in the Django admin. Employees of each firm need self-serve forms to adjust their own settings.
+
+### Admin for firm configuration
+
+```python
+# platform_core/admin.py
+from django.contrib import admin
+from django_stratagem.admin import ContextAwareRegistryAdmin
+from platform_core.models import Firm
+
+
+@admin.register(Firm)
+class FirmAdmin(ContextAwareRegistryAdmin):
+    list_display = ["name", "region", "plan", "compliance_strategy"]
+    list_filter = ["region", "plan"]
+```
+
+`ContextAwareRegistryAdmin` injects the logged-in admin's context into registry form fields. If you're using conditional implementations, the dropdown only shows options the current user is allowed to see.
+
+### Admin for billing with hierarchical fields
+
+```python
+# billing/admin.py
+from django.contrib import admin
+from django_stratagem.admin import HierarchicalRegistryAdmin
+from billing.models import BillingConfig
+
+
+@admin.register(BillingConfig)
+class BillingConfigAdmin(HierarchicalRegistryAdmin):
+    list_display = ["firm", "billing_model", "invoicing_strategy"]
+```
+
+`HierarchicalRegistryAdmin` extends `ContextAwareRegistryAdmin` with JavaScript-driven dynamic updates. When the admin selects a billing model, the invoicing strategy dropdown filters to show only valid children.
+
+### List filter for registry fields
+
+Registry fields automatically get admin list filters. You can also add them explicitly:
+
+```python
+from django_stratagem.admin import RegistryFieldListFilter
+
+@admin.register(Firm)
+class FirmAdmin(ContextAwareRegistryAdmin):
+    list_display = ["name", "region", "plan", "compliance_strategy"]
+    list_filter = [
+        "region",
+        "plan",
+        ("compliance_strategy", RegistryFieldListFilter),
+    ]
+```
+
+The filter is context-aware and only shows implementations available to the current admin user.
+
+### Self-serve form for employees
+
+Employees might configure their own notification or onboarding preferences through a form:
+
+```python
+# onboarding/forms.py
+from django import forms
+from django_stratagem import (
+    ContextAwareRegistryFormField,
+    RegistryContextMixin,
+    RegistryWidget,
+)
+from onboarding.registry import OnboardingRegistry
+
+
+class OnboardingPreferenceForm(RegistryContextMixin, forms.Form):
+    workflow = ContextAwareRegistryFormField(
+        registry=OnboardingRegistry,
+        widget=RegistryWidget(registry=OnboardingRegistry),
+    )
+```
+
+`RegistryContextMixin` handles passing context to the form fields. `RegistryWidget` enhances the `<select>` with `title` (description), `data-icon`, and `data-priority` attributes on each option.
+
+Use it in a view:
+
+```python
+# onboarding/views.py
+from django.shortcuts import render
+from onboarding.forms import OnboardingPreferenceForm
+
+
+def onboarding_settings(request):
+    context = {
+        "user": request.user,
+        "firm": request.user.employee.firm,
+        "request": request,
+    }
+    form = OnboardingPreferenceForm(
+        data=request.POST or None,
+        registry_context=context,
+    )
+    if request.method == "POST" and form.is_valid():
+        selected_workflow = form.cleaned_data["workflow"]
+        # selected_workflow is the implementation class
+        # ...
+    return render(request, "onboarding/settings.html", {"form": form})
+```
+
+### Hierarchical form with dependent dropdowns
+
+For billing configuration, use `HierarchicalFormMixin` to wire up parent-child field dependencies:
+
+```python
+# billing/forms.py
+from django import forms
+from django_stratagem import (
+    HierarchicalFormMixin,
+    HierarchicalRegistryFormField,
+    RegistryFormField,
+)
+from billing.registry import BillingModelRegistry, InvoicingStrategyRegistry
+
+
+class BillingConfigForm(HierarchicalFormMixin, forms.Form):
+    billing_model = RegistryFormField(registry=BillingModelRegistry)
+    invoicing_strategy = HierarchicalRegistryFormField(
+        registry=InvoicingStrategyRegistry,
+        parent_field="billing_model",
+    )
+```
+
+:::{tip}
+`HierarchicalFormMixin` validates that the selected child is valid for the selected parent during `clean()`. You don't need to write that validation yourself.
+:::
+
+See [How to Use Forms, Widgets, and the Admin](howto-forms-admin.md) for all form fields, widgets, and admin classes.
+
+## 7. Templates
+
+The subcontractor dashboard needs to display available compliance options and onboarding workflows. django-stratagem ships template tags and filters for this.
+
+### Subcontractor dashboard
+
+```html
+<!-- templates/dashboard/subcontractor.html -->
+{% load stratagem %}
+
+<h2>Compliance Standards</h2>
+{% get_implementations compliance_registry as standards %}
+{% for slug, impl in standards.items %}
+    <div class="card">
+        {% if impl|registry_icon %}
+            <span class="icon">{{ impl|registry_icon }}</span>
+        {% endif %}
+        <h3>{{ impl|display_name }}</h3>
+        <p>{{ impl|registry_description }}</p>
+    </div>
+{% endfor %}
+
+<h2>Available Onboarding Workflows</h2>
+{% get_implementations onboarding_registry request_context as workflows %}
+{% for slug, impl in workflows.items %}
+    <div class="card">
+        <h3>{{ impl|display_name }}</h3>
+        <p>{{ impl|registry_description }}</p>
+        {% if impl|is_available:request_context %}
+            <span class="badge available">Available for your plan</span>
+        {% else %}
+            <span class="badge locked">Upgrade to unlock</span>
+        {% endif %}
+    </div>
+{% endfor %}
+```
+
+### Build the template context in your view
+
+```python
+# platform_core/views.py
+from django.shortcuts import render
+from compliance.registry import ComplianceRegistry
+from onboarding.registry import OnboardingRegistry
+
+
+def subcontractor_dashboard(request):
+    context = {
+        "user": request.user,
+        "firm": request.user.employee.firm,
+        "request": request,
+    }
+    return render(request, "dashboard/subcontractor.html", {
+        "compliance_registry": ComplianceRegistry,
+        "onboarding_registry": OnboardingRegistry,
+        "request_context": context,
+    })
+```
+
+### Choices in a dropdown
+
+The `get_choices` tag generates `(slug, label)` tuples suitable for `<select>` options:
+
+```html
+{% load stratagem %}
+
+{% get_choices compliance_registry as compliance_choices %}
+<select name="compliance">
+    {% for slug, label in compliance_choices %}
+        <option value="{{ slug }}">{{ label }}</option>
+    {% endfor %}
+</select>
+```
+
+:::{tip}
+Pass a context dict to `get_implementations` or `get_choices` to get context-filtered results. Without a context, you get all registered implementations regardless of conditions.
+:::
+
+See [How to Use Template Tags and Filters](howto-templates.md) for the full list of tags and filters.
+
+## 8. API Layer
+
+The platform needs an API for mobile apps and third-party integrations. django-stratagem provides DRF serializer fields for custom endpoints and built-in views for dynamic choice loading.
+
+### DRF serializer fields
+
+Use `DrfRegistryField` in your serializers to accept and validate registry slugs:
+
+```python
+# platform_core/serializers.py
+from rest_framework import serializers
+from django_stratagem.drf.serializers import DrfRegistryField, DrfMultipleRegistryField
+from compliance.registry import ComplianceRegistry
+from onboarding.registry import OnboardingRegistry
+
+
+class FirmConfigSerializer(serializers.Serializer):
+    compliance_strategy = DrfRegistryField(registry=ComplianceRegistry)
+    onboarding_workflows = DrfMultipleRegistryField(registry=OnboardingRegistry)
+```
+
+`DrfRegistryField` accepts slugs or FQNs as input, validates against the registry, and serializes back to slugs by default. `DrfMultipleRegistryField` works the same way for multiple selections.
+
+```python
+# Input
+data = {
+    "compliance_strategy": "osha",
+    "onboarding_workflows": ["standard", "guided"],
+}
+
+serializer = FirmConfigSerializer(data=data)
+serializer.is_valid(raise_exception=True)
+serializer.validated_data["compliance_strategy"]
+# <class 'OshaCompliance'>
+```
+
+### Built-in API views
+
+django-stratagem includes two views for dynamic choice loading - useful for JavaScript-driven dependent dropdowns:
+
+**`RegistryChoicesAPIView`** returns choices for a registry, optionally filtered by parent:
+
+```
+GET /stratagem/api/registry/choices/?registry=ComplianceRegistry
+```
+
+```json
+{
+    "choices": [["osha", "Osha Compliance"], ["hse", "Hse Compliance"], ["safework", "Safe Work Compliance"]],
+    "registry": "ComplianceRegistry",
+    "parent": null
+}
+```
+
+**`RegistryHierarchyAPIView`** returns hierarchy maps for hierarchical registries:
+
+```
+GET /stratagem/api/registry/hierarchy/
+```
+
+```json
+{
+    "hierarchies": {
+        "InvoicingStrategyRegistry": {
+            "parent_registry": "BillingModelRegistry",
+            "hierarchy_map": {
+                "time_and_materials": ["hourly", "weekly"],
+                "fixed_price": ["milestone", "completion"],
+                "cost_plus": ["open_book", "monthly_reconciliation"]
+            }
+        }
+    }
+}
+```
+
+### URL configuration
+
+Include the DRF URLs in your project:
+
+```python
+# urls.py
+from django.urls import include, path
+
+urlpatterns = [
+    # ...
+    path("stratagem/", include("django_stratagem.drf.urls")),
+]
+```
+
+This registers:
+- `stratagem/api/registry/choices/` - `RegistryChoicesAPIView`
+- `stratagem/api/registry/hierarchy/` - `RegistryHierarchyAPIView`
+
+:::{tip}
+The API views are plain Django `View` subclasses returning `JsonResponse` - they don't require DRF to be installed. The DRF serializer fields (`DrfRegistryField`, `DrfMultipleRegistryField`) do require `djangorestframework`.
+:::
+
+See [How to Use DRF Integration](howto-drf.md) for the full API reference.
+
+## 9. Time-Based and Feature Flag Conditions
+
+Safety inspections are a core part of construction management. Different scheduling strategies apply depending on the time of day, the season, whether a feature is in beta, or the user's role.
+
+### Define the inspection schedule registry
+
+```python
+# compliance/registry.py (continued)
+from django_stratagem import Registry, Interface
+
+
+class InspectionScheduleRegistry(Registry):
+    implementations_module = "inspection_schedules"
+
+
+class InspectionScheduleInterface(Interface):
+    registry = InspectionScheduleRegistry
+
+    def get_next_inspection(self, subcontractor):
+        """Return the next scheduled inspection date."""
+        raise NotImplementedError
+```
+
+### Time-constrained implementations
+
+```python
+# compliance/inspection_schedules.py
+from datetime import date, time
+
+from django_stratagem import (
+    ConditionalInterface,
+    DateRangeCondition,
+    FeatureFlagCondition,
+    GroupCondition,
+    TimeWindowCondition,
+)
+from compliance.registry import InspectionScheduleInterface, InspectionScheduleRegistry
+
+
+class StandardSchedule(InspectionScheduleInterface):
+    slug = "standard"
+    description = "Regular inspection schedule - available any time"
+    priority = 10
+
+    def get_next_inspection(self, subcontractor):
+        # ... standard scheduling logic
+        pass
+
+
+class BusinessHoursSchedule(ConditionalInterface):
+    registry = InspectionScheduleRegistry
+    slug = "business_hours"
+    description = "Inspections during business hours only (Mon-Fri, 9am-5pm)"
+    priority = 20
+    condition = TimeWindowCondition(time(9, 0), time(17, 0), days=[0, 1, 2, 3, 4])
+
+    def get_next_inspection(self, subcontractor):
+        # ... only schedule during business hours
+        pass
+
+
+class SummerBlitzSchedule(ConditionalInterface):
+    registry = InspectionScheduleRegistry
+    slug = "summer_blitz"
+    description = "Accelerated summer inspection campaign (Jun-Aug)"
+    priority = 30
+    condition = DateRangeCondition(date(2026, 6, 1), date(2026, 8, 31))
+
+    def get_next_inspection(self, subcontractor):
+        # ... more frequent inspections during peak season
+        pass
+
+
+class SmartSchedule(ConditionalInterface):
+    registry = InspectionScheduleRegistry
+    slug = "smart_schedule"
+    description = "AI-powered risk-based scheduling (beta)"
+    priority = 40
+    condition = FeatureFlagCondition("smart_scheduling_beta")
+
+    def get_next_inspection(self, subcontractor):
+        # ... ML-based scheduling
+        pass
+
+
+class ManagerSchedule(ConditionalInterface):
+    registry = InspectionScheduleRegistry
+    slug = "manager_only"
+    description = "Manager-defined custom schedule"
+    priority = 50
+    condition = GroupCondition("project_managers")
+
+    def get_next_inspection(self, subcontractor):
+        # ... custom schedule set by project manager
+        pass
+```
+
+### Composing multiple conditions
+
+For a strategy that's only available during summer business hours, compose conditions:
+
+```python
+class SummerBusinessHoursSchedule(ConditionalInterface):
+    registry = InspectionScheduleRegistry
+    slug = "summer_business_hours"
+    description = "Business hours inspections during summer peak"
+    priority = 35
+    condition = (
+        TimeWindowCondition(time(9, 0), time(17, 0), days=[0, 1, 2, 3, 4])
+        & DateRangeCondition(date(2026, 6, 1), date(2026, 8, 31))
+    )
+
+    def get_next_inspection(self, subcontractor):
+        pass
+```
+
+### Checking conditions at runtime
+
+```python
+from compliance.registry import InspectionScheduleRegistry
+
+context = {"user": request.user, "request": request}
+
+# Only strategies whose conditions pass right now
+available = InspectionScheduleRegistry.get_available_implementations(context)
+
+# Get with fallback if preferred strategy is unavailable
+schedule = InspectionScheduleRegistry.get_for_context(
+    context,
+    slug="summer_blitz",
+    fallback="standard",
+)
+```
+
+:::{tip}
+`TimeWindowCondition` handles overnight windows (e.g., `time(22, 0)` to `time(6, 0)`) and day-of-week filtering using Python weekday convention (0=Monday, 6=Sunday). `DateRangeCondition` supports open-ended ranges by passing `None` for either bound.
+:::
+
+See [How to Use Conditional Availability](howto-conditions.md) for the full list of built-in conditions.
+
+## 10. Extension Hooks
+
+Construction compliance is a regulated domain. You need strict validation on what gets registered, audit metadata on every implementation, and a log trail when registrations change.
+
+### Strict interface enforcement
+
+Override `validate_implementation` to require that every compliance implementation defines the expected methods:
+
+```python
+# compliance/registry.py
+from django_stratagem import Registry, Interface
+
+
+class ComplianceRegistry(Registry):
+    implementations_module = "compliance_reports"
+
+    @classmethod
+    def validate_implementation(cls, implementation):
+        # Preserve default slug + interface checks
+        super().validate_implementation(implementation)
+
+        # Require generate_report method
+        if not callable(getattr(implementation, "generate_report", None)):
+            raise TypeError(
+                f"{implementation.__name__} must define a generate_report() method"
+            )
+
+        # Require get_requirements method
+        if not callable(getattr(implementation, "get_requirements", None)):
+            raise TypeError(
+                f"{implementation.__name__} must define a get_requirements() method"
+            )
+```
+
+If `validate_implementation` raises, registration stops immediately - the class is not stored, `on_register` is not called, and no signal fires.
+
+### Audit metadata
+
+Override `build_implementation_meta` to record extra information alongside each registered implementation:
+
+```python
+# compliance/registry.py (continued)
+from datetime import datetime
+
+
+class ComplianceRegistry(Registry):
+    implementations_module = "compliance_reports"
+
+    @classmethod
+    def validate_implementation(cls, implementation):
+        super().validate_implementation(implementation)
+        if not callable(getattr(implementation, "generate_report", None)):
+            raise TypeError(f"{implementation.__name__} must define generate_report()")
+        if not callable(getattr(implementation, "get_requirements", None)):
+            raise TypeError(f"{implementation.__name__} must define get_requirements()")
+
+    @classmethod
+    def build_implementation_meta(cls, implementation):
+        meta = super().build_implementation_meta(implementation)
+        meta["certification_body"] = getattr(implementation, "certification_body", "unknown")
+        meta["last_audit"] = getattr(implementation, "last_audit", None)
+        meta["registered_at"] = datetime.now().isoformat()
+        return meta
+```
+
+Now implementations can declare audit-relevant attributes (already added in section 2):
+
+```python
+# compliance/compliance_reports.py
+class OshaCompliance(ComplianceInterface):
+    slug = "osha"
+    description = "U.S. OSHA safety reporting"
+    certification_body = "OSHA"
+    last_audit = "2025-12-15"
+    # ...
+```
+
+Access the extra metadata:
+
+```python
+meta = ComplianceRegistry.get_implementation_meta("osha")
+meta["certification_body"]  # "OSHA"
+meta["registered_at"]       # "2026-01-15T10:30:00.123456"
+```
+
+### Audit trail on registration changes
+
+Override `on_register` and `on_unregister` for logging:
+
+```python
+# compliance/registry.py (continued)
+import logging
+
+logger = logging.getLogger("compliance.audit")
+
+
+class ComplianceRegistry(Registry):
+    implementations_module = "compliance_reports"
+
+    # ... validate_implementation and build_implementation_meta from above ...
+
+    @classmethod
+    def on_register(cls, slug, implementation, meta):
+        logger.info(
+            "Registered compliance implementation: %s (body=%s, priority=%d)",
+            slug,
+            meta.get("certification_body", "unknown"),
+            meta.get("priority", 0),
+        )
+
+    @classmethod
+    def on_unregister(cls, slug, meta):
+        logger.warning(
+            "Unregistered compliance implementation: %s (was certified by %s)",
+            slug,
+            meta.get("certification_body", "unknown"),
+        )
+```
+
+### Execution order
+
+The hooks run in a specific order:
+
+```
+register():
+  1. validate_implementation(implementation)  - may raise, stopping everything
+  2. meta = build_implementation_meta(implementation)
+  3. implementations[slug] = meta
+  4. clear_cache()
+  5. on_register(slug, implementation, meta)
+  6. implementation_registered signal sent
+
+unregister():
+  1. meta = implementations.pop(slug)
+  2. clear_cache()
+  3. on_unregister(slug, meta)
+  4. implementation_unregistered signal sent
+```
+
+:::{tip}
+Hooks are for logic specific to one registry subclass. Use signals (next section) when multiple unrelated parts of the system need to react to registration changes.
+:::
+
+See [Extension Hooks and Customization Points](hooks.md) for the full hook reference and testing patterns.
+
+## 11. Signals
+
+Different apps need to react when registrations change. The billing app might need to invalidate cached pricing when a billing model is added. The platform might need to notify firms. Signals provide the loose coupling for this.
+
+### Cross-app cache invalidation
+
+```python
+# billing/signals.py
+from django.dispatch import receiver
+from django_stratagem.signals import implementation_registered, implementation_unregistered
+
+
+@receiver(implementation_registered)
+@receiver(implementation_unregistered)
+def invalidate_billing_cache(sender, **kwargs):
+    """Clear billing caches when any billing registry changes."""
+    from billing.registry import BillingModelRegistry, InvoicingStrategyRegistry
+
+    if sender in (BillingModelRegistry, InvoicingStrategyRegistry):
+        from django.core.cache import cache
+        cache.delete("billing:choices")
+        cache.delete("billing:hierarchy_map")
+```
+
+### Notify firms on new compliance options
+
+```python
+# platform_core/signals.py
+import logging
+
+from django.dispatch import receiver
+from django_stratagem.signals import implementation_registered
+
+logger = logging.getLogger("platform_core")
+
+
+@receiver(implementation_registered)
+def notify_firms_of_new_option(sender, registry, implementation, **kwargs):
+    """Log when a new compliance option becomes available."""
+    from compliance.registry import ComplianceRegistry
+
+    if registry is ComplianceRegistry:
+        logger.info(
+            "New compliance option available: %s - %s",
+            implementation.slug,
+            implementation.description,
+        )
+```
+
+### Warm caches after reload
+
+```python
+# platform_core/signals.py (continued)
+from django.dispatch import receiver
+from django_stratagem.signals import registry_reloaded
+
+
+@receiver(registry_reloaded)
+def warm_caches(sender, registry, **kwargs):
+    """Pre-populate caches after a registry reload."""
+    registry.get_choices()
+    registry.get_items()
+```
+
+### Connect signals at startup
+
+Make sure the signal handlers are imported in your `AppConfig.ready()`:
+
+```python
+# billing/apps.py
+from django.apps import AppConfig
+
+
+class BillingConfig(AppConfig):
+    name = "billing"
+    default_auto_field = "django.db.models.BigAutoField"
+
+    def ready(self):
+        import billing.signals  # noqa: F401
+```
+
+:::{tip}
+Use hooks when the behavior belongs to a specific registry subclass. Use signals when the listener lives in a different app or when multiple listeners need to react independently.
+:::
+
+See [Extension Hooks and Customization Points](hooks.md#signals) for more signal patterns and the complete signal reference.
+
+## 12. Plugins
+
+A partner company builds a Canadian compliance module. They should be able to ship it as a separate package that plugs into your `ComplianceRegistry` without touching your code.
+
+### The plugin package
+
+The plugin is a normal Python package with an implementation and a metadata module:
+
+```python
+# django_compliance_canada/compliance_reports.py
+from compliance.registry import ComplianceInterface
+
+
+class CanadianOhsCompliance(ComplianceInterface):
+    slug = "canadian_ohs"
+    description = "Canadian OHS compliance reporting"
+    icon = "ca-flag"
+    priority = 40
+    certification_body = "CCOHS"
+    last_audit = "2026-01-10"
+
+    def generate_report(self, subcontractor, period):
+        return {
+            "standard": "Canada OHS Regulations",
+            "subcontractor": subcontractor.name,
+            "period": str(period),
+            "sections": ["workplace_hazards", "whmis", "joint_committee"],
+        }
+
+    def get_requirements(self):
+        return ["WHMIS training", "Joint health and safety committee", "Workplace inspection reports"]
+```
+
+### Plugin metadata
+
+```python
+# django_compliance_canada/stratagem_plugin.py
+
+__version__ = "1.0.0"
+
+REGISTRY = "ComplianceRegistry"
+
+IMPLEMENTATIONS = [
+    "django_compliance_canada.compliance_reports.CanadianOhsCompliance",
+]
+```
+
+### Register the entry point
+
+In the plugin's `pyproject.toml`:
+
+```toml
+[project.entry-points."django_stratagem.plugins"]
+compliance_canada = "django_compliance_canada.stratagem_plugin"
+```
+
+Once installed, `CanadianOhsCompliance` appears in `ComplianceRegistry` alongside the built-in options - in forms, admin dropdowns, and API responses.
+
+### Controlling plugins
+
+Platform operators can enable or disable plugins in settings:
+
+```python
+# settings.py
+DJANGO_STRATAGEM = {
+    # Allow only specific plugins (None means allow all)
+    "ENABLED_PLUGINS": ["compliance_canada"],
+
+    # Or block specific plugins while allowing everything else
+    "DISABLED_PLUGINS": ["unwanted_plugin"],
+}
+```
+
+:::{tip}
+The plugin entry point key (`compliance_canada`) is the name used in `ENABLED_PLUGINS` and `DISABLED_PLUGINS`. Choose a clear, unique name for your plugin.
+:::
+
+See [How to Use the Plugin System](howto-plugins.md) for the full plugin development guide.
+
+## 13. Putting It All Together
+
+You now have four apps using nearly every feature of django-stratagem. Here's the full picture.
+
+### Architecture overview
+
+```{mermaid}
+graph TD
+    subgraph platform_core
+        Firm
+        Subcontractor
+        Employee
+        SubcontractorEmployee
+    end
+
+    subgraph compliance
+        CR[ComplianceRegistry]
+        OSHA[OshaCompliance]
+        HSE[HseCompliance]
+        SW[SafeWorkCompliance]
+        ISR[InspectionScheduleRegistry]
+    end
+
+    subgraph onboarding
+        OR[OnboardingRegistry]
+        Std[StandardOnboarding]
+        Guided[GuidedOnboarding]
+        Ent[EnterpriseOnboarding]
+    end
+
+    subgraph billing
+        BMR[BillingModelRegistry]
+        IStraR[InvoicingStrategyRegistry]
+    end
+
+    subgraph plugin["django-compliance-canada"]
+        CAN[CanadianOhsCompliance]
+    end
+
+    Firm -->|"compliance_strategy"| CR
+    Employee -->|"onboarding_preference"| OR
+    Firm -->|"billing_model"| BMR
+    BMR -->|"parent"| IStraR
+    CAN -.->|"plugin"| CR
+```
+
+### Management commands
+
+Inspect and manage your registries from the command line:
+
+```bash
+# List all registries and their implementations
+python manage.py list_registries
+
+# JSON output for scripting
+python manage.py list_registries --format json
+
+# Clear all registry caches
+python manage.py clear_registries_cache
+
+# Re-discover and initialize all registries
+python manage.py initialize_registries
+
+# Force re-initialization with cache clearing
+python manage.py initialize_registries --force --clear-cache
+
+# Verbose output with health checks
+python manage.py initialize_registries -v 2
+```
+
+### Feature summary
+
+| Section | Feature | Where it's used |
+|---|---|---|
+| 2 | Registry, Interface, autodiscovery | ComplianceRegistry - regional safety standards |
+| 3 | Model fields, factory, lookups | Firm stores compliance choice in DB |
+| 4 | ConditionalInterface, custom Condition | OnboardingRegistry - plan-based access |
+| 5 | HierarchicalRegistry, HierarchicalInterface | Billing model to invoicing strategy hierarchy |
+| 6 | Form fields, mixins, admin, widgets, list filters | Admin configures firms; employees self-serve |
+| 7 | Template tags and filters | Subcontractor dashboard |
+| 8 | DRF fields, API views | Mobile app and third-party integrations |
+| 9 | TimeWindow, DateRange, FeatureFlag, Group conditions | Inspection scheduling with constraints |
+| 10 | validate_implementation, build_implementation_meta, on_register, on_unregister | Audit trail and strict enforcement |
+| 11 | Signals | Cross-app cache invalidation and notifications |
+| 12 | Plugin entry points | Third-party Canadian compliance module |
+
+### Where to go next
+
+The how-to guides cover each feature in depth:
+
+- [How to Use Model Fields](howto-fields.md) - all field types, lookups, factory patterns
+- [How to Use Forms, Widgets, and the Admin](howto-forms-admin.md) - form fields, widgets, admin classes
+- [How to Use Conditional Availability](howto-conditions.md) - all built-in conditions, composition, custom conditions
+- [How to Use Hierarchical Registries](howto-hierarchies.md) - parent-child relationships
+- [How to Use Template Tags and Filters](howto-templates.md) - tags and filters
+- [How to Use DRF Integration](howto-drf.md) - serializer fields and API views
+- [How to Use the Plugin System](howto-plugins.md) - writing and using plugins
+- [Extension Hooks and Customization Points](hooks.md) - hooks, signals, testing
+- [Architecture and Design](explanation.md) - how auto-discovery works, design decisions
+
+---
+
+<!-- source: docs/howto-fields.md -->
+
+# How to Use Model Fields
+
+django-stratagem provides model fields for storing references to registry implementations. Each field stores a fully qualified class name (FQN) like `"myapp.notifications.EmailNotification"` as a `CharField` value in the database.
+
+## Field Types Summary
+
+| Field | Stores | Returns on Access |
+|---|---|---|
+| `RegistryClassField` | Single FQN string | The class itself |
+| `RegistryField` | Single FQN string | An instance (via factory) |
+| `MultipleRegistryClassField` | Comma-separated FQNs | List of classes |
+| `MultipleRegistryField` | Comma-separated FQNs | List of instances |
+| `HierarchicalRegistryField` | Single FQN string | Instance with parent validation |
+| `MultipleHierarchicalRegistryField` | Comma-separated FQNs | List of instances with parent validation |
+
+## Common Parameters
+
+All registry fields accept these parameters:
+
+`registry`
+: The `Registry` subclass this field is tied to. Required.
+
+`import_error`
+: Value or callable to use when a stored class can't be imported. If callable, receives `(original_value, exception)`. Default: `None`.
+
+`max_length`
+: Maximum CharField length. Default: `200`.
+
+Plus all standard Django `Field` kwargs (`blank`, `null`, `default`, `verbose_name`, etc.).
+
+## RegistryClassField
+
+Stores a reference to an implementation class. Accessing the field returns the class.
+
+```python
+from django_stratagem import RegistryClassField
+
+class MyModel(models.Model):
+    strategy = RegistryClassField(registry=NotificationRegistry)
+```
+
+```python
+obj = MyModel()
+obj.strategy = EmailNotification       # Set by class
+obj.strategy = "email"                  # Set by slug
+obj.strategy = "myapp.notifications.EmailNotification"  # Set by FQN
+obj.save()
+
+obj.strategy  # Returns <class 'myapp.notifications.EmailNotification'>
+```
+
+:::{tip}
+The convenience method `Registry.choices_field()` creates a `RegistryClassField` tied to the registry:
+
+```python
+strategy = NotificationRegistry.choices_field()
+# Equivalent to: RegistryClassField(registry=NotificationRegistry)
+```
+:::
+
+## RegistryField
+
+Like `RegistryClassField`, but accessing the field returns an *instance* created by the `factory` callable.
+
+```python
+from django_stratagem import RegistryField
+
+class MyModel(models.Model):
+    strategy = RegistryField(
+        registry=NotificationRegistry,
+        factory=lambda klass, obj: klass(),  # default
+    )
+```
+
+`factory`
+: A callable `(klass, obj) -> instance` where `klass` is the implementation class and `obj` is the model instance. Default: `lambda klass, obj: klass()`.
+
+```python
+obj.strategy.send("Hello!", "user@example.com")  # Already an instance
+```
+
+:::{tip}
+The convenience method `Registry.instance_field()` creates a `RegistryField`:
+
+```python
+strategy = NotificationRegistry.instance_field()
+```
+:::
+
+## MultipleRegistryClassField
+
+Stores references to multiple implementation classes as comma-separated FQNs.
+
+```python
+from django_stratagem import MultipleRegistryClassField
+
+class MyModel(models.Model):
+    strategies = MultipleRegistryClassField(registry=NotificationRegistry)
+```
+
+```python
+obj.strategies = [EmailNotification, SMSNotification]
+obj.save()
+
+obj.strategies  # [<class 'EmailNotification'>, <class 'SMSNotification'>]
+```
+
+## MultipleRegistryField
+
+Like `MultipleRegistryClassField`, but returns instances.
+
+```python
+from django_stratagem import MultipleRegistryField
+
+class MyModel(models.Model):
+    strategies = MultipleRegistryField(
+        registry=NotificationRegistry,
+        factory=lambda klass, obj: klass(),
+    )
+```
+
+```python
+for strategy in obj.strategies:
+    strategy.send("Hello!", "user@example.com")
+```
+
+## HierarchicalRegistryField
+
+A registry field that depends on a parent registry field selection. Used with `HierarchicalRegistry`.
+
+```python
+from django_stratagem import HierarchicalRegistryField
+
+class MyModel(models.Model):
+    category = NotificationRegistry.choices_field()
+    subcategory = HierarchicalRegistryField(
+        registry=SubcategoryRegistry,
+        parent_field="category",
+    )
+```
+
+`parent_field`
+: Name of the model field that holds the parent selection. Validation ensures the child selection is valid for the chosen parent.
+
+## MultipleHierarchicalRegistryField
+
+Multiple selection version of `HierarchicalRegistryField`.
+
+```python
+from django_stratagem import MultipleHierarchicalRegistryField
+
+class MyModel(models.Model):
+    category = NotificationRegistry.choices_field()
+    subcategories = MultipleHierarchicalRegistryField(
+        registry=SubcategoryRegistry,
+        parent_field="category",
+    )
+```
+
+## Slug Resolution
+
+All field descriptors resolve values using this order:
+
+1. Check if the value is a slug in `registry.implementations`
+2. Fall back to importing as a fully qualified name via `import_by_name()`
+
+This means you can set fields using either slugs or FQNs.
+
+## Querying with Lookups
+
+Registry fields register custom lookups that automatically convert classes and instances to their FQN strings for database queries.
+
+```python
+# Filter by class
+MyModel.objects.filter(strategy=EmailNotification)
+
+# Filter by slug string
+MyModel.objects.filter(strategy="email")
+
+# Filter with __in lookup (accepts classes)
+MyModel.objects.filter(strategy__in=[EmailNotification, SMSNotification])
+
+# Contains lookup (for multiple fields)
+MyModel.objects.filter(strategies__contains=EmailNotification)
+```
+
+Supported lookups: `exact`, `iexact`, `contains`, `icontains`, `in`.
+
+## Advanced Factory Patterns
+
+The `factory` parameter on `RegistryField` controls how instances are created when accessing the field. The default is `lambda klass, obj: klass()`, but you can inject model data, dependencies, or configuration.
+
+### Injecting Model Instance Data
+
+```python
+class Notification(models.Model):
+    channel = RegistryField(
+        registry=NotificationRegistry,
+        factory=lambda klass, obj: klass(
+            sender=obj.sender_email,
+            template=obj.template_name,
+        ),
+    )
+    sender_email = models.EmailField()
+    template_name = models.CharField(max_length=100)
+```
+
+### Dependency Injection
+
+```python
+def create_with_dependencies(klass, obj):
+    """Inject services from a container."""
+    from myapp.services import get_service_container
+    container = get_service_container()
+    return klass(
+        http_client=container.http_client,
+        cache=container.cache,
+    )
+
+class MyModel(models.Model):
+    strategy = RegistryField(
+        registry=MyRegistry,
+        factory=create_with_dependencies,
+    )
+```
+
+### Singleton Pattern
+
+```python
+_instance_cache = {}
+
+def singleton_factory(klass, obj):
+    if klass not in _instance_cache:
+        _instance_cache[klass] = klass()
+    return _instance_cache[klass]
+
+class MyModel(models.Model):
+    strategy = RegistryField(
+        registry=MyRegistry,
+        factory=singleton_factory,
+    )
+```
+
+## Validators
+
+### ClassnameValidator
+
+Validates that a string value is a valid, importable Python class name.
+
+```python
+from django_stratagem import ClassnameValidator
+
+validator = ClassnameValidator(None)
+validator("myapp.notifications.EmailNotification")  # OK
+validator("invalid")  # Raises ValidationError
+```
+
+### RegistryValidator
+
+Validates that a value is registered in a specific registry.
+
+```python
+from django_stratagem import RegistryValidator
+
+validator = RegistryValidator(NotificationRegistry)
+validator("email")  # OK if registered
+validator("unknown")  # Raises ValidationError
+```
+
+Supports both single values and lists. Both validators are automatically added to registry model fields.
+
+## System Checks
+
+django-stratagem registers system checks under the `django_stratagem` tag:
+
+| ID | Level | Description |
+|---|---|---|
+| `E001` | Error | Registry has invalid `implementations_module` |
+| `E002` | Error | Model field has invalid `registry` (not a Registry subclass) |
+| `W001` | Warning | Hierarchical registry references parent not in global registry |
+| `W002` | Warning | Model field references registry not in global registry |
+
+Run checks with:
+
+```bash
+python manage.py check --tag django_stratagem
+```
+
+---
+
+<!-- source: docs/howto-forms-admin.md -->
+
+# How to Use Forms, Widgets, and the Admin
+
+Registry model fields produce appropriate form fields by default, but you can also use them directly or swap in context-aware and hierarchical variants.
+
+## Form Fields
+
+### RegistryFormField
+
+A `ChoiceField` that presents registry implementations as choices and returns the selected class on clean.
+
+```python
+from django_stratagem import RegistryFormField
+
+class MyForm(forms.Form):
+    strategy = RegistryFormField(registry=NotificationRegistry)
+```
+
+### RegistryMultipleChoiceFormField
+
+A `TypedMultipleChoiceField` for selecting multiple implementations.
+
+```python
+from django_stratagem import RegistryMultipleChoiceFormField
+
+class MyForm(forms.Form):
+    strategies = RegistryMultipleChoiceFormField(registry=NotificationRegistry)
+```
+
+### ContextAwareRegistryFormField
+
+Limits the choices shown based on the current user's permissions, feature flags, or other runtime state (used with `ConditionalInterface`).
+
+```python
+from django_stratagem import ContextAwareRegistryFormField
+
+class MyForm(forms.Form):
+    strategy = ContextAwareRegistryFormField(
+        registry=NotificationRegistry,
+        context={"user": request.user, "request": request},
+    )
+```
+
+Call `field.set_context(new_context)` to update the context and refresh choices.
+
+### HierarchicalRegistryFormField
+
+Shows only child options that are valid for the selected parent.
+
+```python
+from django_stratagem import HierarchicalRegistryFormField
+
+class MyForm(forms.Form):
+    category = RegistryFormField(registry=CategoryRegistry)
+    subcategory = HierarchicalRegistryFormField(
+        registry=SubcategoryRegistry,
+        parent_field="category",
+    )
+```
+
+Call `field.set_parent_value(value)` to update the parent and refresh choices.
+
+## Form Mixins
+
+### RegistryContextMixin
+
+Mixin for forms that need to pass context to `ContextAwareRegistryFormField` fields.
+
+```python
+from django_stratagem import RegistryContextMixin
+
+class MyForm(RegistryContextMixin, forms.Form):
+    strategy = ContextAwareRegistryFormField(registry=NotificationRegistry)
+
+# Usage:
+form = MyForm(registry_context={"user": request.user})
+```
+
+### HierarchicalFormMixin
+
+Mixin for forms with hierarchical registry fields. Automatically sets up parent-child relationships and validates them on clean.
+
+```python
+from django_stratagem import HierarchicalFormMixin
+
+class MyForm(HierarchicalFormMixin, forms.ModelForm):
+    class Meta:
+        model = MyModel
+        fields = ["category", "subcategory"]
+```
+
+## Widgets
+
+### RegistryWidget
+
+Enhanced `Select` widget that adds `title` (description), `data-icon`, and `data-priority` attributes to each option.
+
+```python
+from django_stratagem import RegistryWidget
+
+class MyForm(forms.Form):
+    strategy = RegistryFormField(
+        registry=NotificationRegistry,
+        widget=RegistryWidget(registry=NotificationRegistry),
+    )
+```
+
+### HierarchicalRegistryWidget
+
+A `Select` widget that emits `data-parent-field` and `data-hierarchical` attributes for JavaScript-driven dynamic updates.
+
+```python
+from django_stratagem import HierarchicalRegistryWidget
+
+class MyForm(forms.Form):
+    subcategory = HierarchicalRegistryFormField(
+        registry=SubcategoryRegistry,
+        parent_field="category",
+        widget=HierarchicalRegistryWidget(parent_field="category"),
+    )
+```
+
+## Customizing Form Fields
+
+Subclass the built-in form fields to add custom filtering or behavior:
+
+```python
+from django_stratagem.forms import RegistryFormField
+
+class FilteredRegistryFormField(RegistryFormField):
+    """Only show implementations with priority < 100."""
+
+    def __init__(self, *args, max_priority=100, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.max_priority = max_priority
+        self._filter_choices()
+
+    def _filter_choices(self):
+        registry = self.registry
+        filtered = [
+            (slug, label)
+            for slug, label in registry.get_choices()
+            if registry.implementations.get(slug, {}).get("priority", 0) < self.max_priority
+        ]
+        self.choices = filtered
+```
+
+### Extending Form Mixins
+
+```python
+from django_stratagem.forms import RegistryContextMixin
+
+class TenantRegistryForm(RegistryContextMixin, forms.ModelForm):
+    """Automatically inject tenant from request."""
+
+    def __init__(self, *args, request=None, **kwargs):
+        context = {"user": request.user, "tenant": request.tenant} if request else {}
+        super().__init__(*args, registry_context=context, **kwargs)
+```
+
+## Django Admin
+
+### ContextAwareRegistryAdmin
+
+A `ModelAdmin` that injects request context into registry form fields so that conditional implementations are filtered per-user.
+
+```python
+from django.contrib import admin
+from django_stratagem.admin import ContextAwareRegistryAdmin
+
+@admin.register(MyModel)
+class MyModelAdmin(ContextAwareRegistryAdmin):
+    pass
+```
+
+### HierarchicalRegistryAdmin
+
+Extends `ContextAwareRegistryAdmin` with support for hierarchical registry fields. Adds `data-hierarchical`, `data-registry`, and `data-parent-field` widget attributes for JavaScript integration.
+
+```python
+from django_stratagem.admin import HierarchicalRegistryAdmin
+
+@admin.register(MyModel)
+class MyModelAdmin(HierarchicalRegistryAdmin):
+    pass
+```
+
+Includes `Media` that references `admin/js/hierarchical_registry.js`.
+
+### RegistryFieldListFilter
+
+Admin list filter for registry fields. Automatically registered for all `AbstractRegistryField` instances, but can also be used explicitly:
+
+```python
+@admin.register(MyModel)
+class MyModelAdmin(admin.ModelAdmin):
+    list_filter = (("strategy", RegistryFieldListFilter),)
+```
+
+The filter is context-aware and only shows implementations available to the current user.
+
+### RegistryListMixin
+
+Mixin that automatically adds registry fields to `list_display` and `list_filter`.
+
+## Customizing Admin Behavior
+
+### Extending ContextAwareRegistryAdmin
+
+```python
+from django_stratagem.admin import ContextAwareRegistryAdmin
+
+class MyModelAdmin(ContextAwareRegistryAdmin):
+    def get_registry_context(self, request):
+        """Build the context dict passed to conditional form fields."""
+        return {
+            "user": request.user,
+            "request": request,
+            "tenant": getattr(request, "tenant", None),
+        }
+```
+
+### Adding Dashboard Actions
+
+```python
+from django_stratagem.admin import DjangoStratagemAdminSite
+
+class CustomAdminSite(DjangoStratagemAdminSite):
+    def get_urls(self):
+        urls = super().get_urls()
+        # Add custom registry management URLs
+        return urls
+```
+
+## Dashboard Views
+
+### DjangoStratagemAdminSite
+
+An `AdminSite` subclass that adds a registry dashboard at `/admin/registry-dashboard/`. Shows all registries, their implementations, availability status, and conditions.
+
+### EnhancedDjangoStratagemAdminSite
+
+Extended dashboard at `/admin/enhanced-registry-dashboard/` with hierarchy visualization, parent requirements, and relationship information.
+
+---
+
+<!-- source: docs/howto-templates.md -->
+
+# How to Use Template Tags and Filters
+
+django-stratagem ships template tags and filters for rendering registry data.
+
+## Loading Template Tags
+
+```html
+{% load stratagem %}
+```
+
+## Tags
+
+### get_implementations
+
+Get all implementations for a registry, optionally filtered by context.
+
+```html
+{% get_implementations my_registry as implementations %}
+{% get_implementations my_registry context as implementations %}
+
+{% for slug, impl in implementations.items %}
+    <p>{{ slug }}: {{ impl }}</p>
+{% endfor %}
+```
+
+### get_choices
+
+Get a choices list for a registry.
+
+```html
+{% get_choices my_registry as choices %}
+{% get_choices my_registry context as choices %}
+
+{% for slug, label in choices %}
+    <option value="{{ slug }}">{{ label }}</option>
+{% endfor %}
+```
+
+### get_registries
+
+Get all registered registries.
+
+```html
+{% get_registries as registries %}
+{% for registry in registries %}
+    <h3>{{ registry.__name__ }}</h3>
+{% endfor %}
+```
+
+## Filters
+
+### display_name
+
+Get the human-readable display name for an implementation.
+
+```html
+{{ implementation|display_name }}
+{{ implementation|display_name:my_registry }}
+```
+
+### registry_icon
+
+Get the icon for an implementation.
+
+```html
+{{ implementation|registry_icon }}
+```
+
+### registry_description
+
+Get the description for an implementation.
+
+```html
+{{ implementation|registry_description }}
+```
+
+### is_available
+
+Check if an implementation is available in a given context.
+
+```html
+{% if implementation|is_available:context %}
+    Available
+{% endif %}
+```
+
+## Full Example
+
+A fuller example listing notification channels with their metadata:
+
+```html
+{% load stratagem %}
+
+{% get_implementations notification_registry request_context as channels %}
+
+<div class="channels">
+{% for slug, impl in channels.items %}
+    <div class="channel-card">
+        {% if impl|registry_icon %}
+            <img src="{{ impl|registry_icon }}" alt="">
+        {% endif %}
+        <h3>{{ impl|display_name }}</h3>
+        <p>{{ impl|registry_description }}</p>
+        {% if impl|is_available:request_context %}
+            <span class="status available">Available</span>
+        {% else %}
+            <span class="status unavailable">Unavailable</span>
+        {% endif %}
+    </div>
+{% endfor %}
+</div>
+```
+
+---
+
+<!-- source: docs/howto-conditions.md -->
+
+# How to Use Conditional Availability
+
+Implementations can be conditionally available based on permissions, feature flags, settings, or arbitrary callables.
+
+## ConditionalInterface
+
+Subclass `ConditionalInterface` instead of `Interface` and set the `condition` class attribute:
+
+```python
+from django_stratagem import ConditionalInterface, PermissionCondition
+
+class AdminNotification(ConditionalInterface):
+    registry = NotificationRegistry
+    slug = "admin_only"
+    description = "Admin-only notification channel"
+    condition = PermissionCondition("myapp.admin_notifications")
+
+    def send(self, message, recipient):
+        ...
+```
+
+The `is_available(context)` classmethod checks whether the implementation's conditions are satisfied:
+
+```python
+context = {"user": request.user, "request": request}
+AdminNotification.is_available(context)  # True/False
+```
+
+## Condition Base Class
+
+All conditions extend `Condition` and implement `is_met(context) -> bool`:
+
+```python
+from django_stratagem import Condition
+
+class MyCondition(Condition):
+    def is_met(self, context: dict) -> bool:
+        return context.get("some_key") == "some_value"
+
+    def explain(self) -> str:
+        return "MyCondition(some_key=some_value)"
+```
+
+Additional methods:
+
+- `explain() -> str` - Human-readable description
+- `check_with_details(context) -> tuple[bool, str]` - Returns result with explanation (useful for debugging)
+
+## Built-in Conditions
+
+### PermissionCondition
+
+Checks `user.has_perm()` against a Django permission string.
+
+```python
+PermissionCondition("myapp.can_send_sms")
+```
+
+The `context` dict must include a `"user"` key with an authenticated user.
+
+### FeatureFlagCondition
+
+Checks a feature flag. Supports `settings.FEATURE_FLAGS` dict or django-waffle.
+
+```python
+FeatureFlagCondition("enable_push_notifications")
+```
+
+With waffle, the `context` dict must include a `"request"` key.
+
+### SettingCondition
+
+Checks if a Django setting matches an expected value.
+
+```python
+SettingCondition("DEBUG", True)
+SettingCondition("NOTIFICATION_BACKEND", "production")
+```
+
+### CallableCondition
+
+Wraps any `(context) -> bool` callable.
+
+```python
+CallableCondition(lambda ctx: ctx.get("user") and ctx["user"].is_staff)
+```
+
+### AuthenticatedCondition
+
+Checks that the user in context is authenticated. Works safely with `AnonymousUser`, mock users, or missing user keys.
+
+```python
+AuthenticatedCondition()
+```
+
+The `context` dict must include a `"user"` key.
+
+### StaffCondition
+
+Checks that the user is a staff member (`is_staff`).
+
+```python
+StaffCondition()
+```
+
+### SuperuserCondition
+
+Checks that the user is a superuser (`is_superuser`).
+
+```python
+SuperuserCondition()
+```
+
+### GroupCondition
+
+Checks that the user belongs to a specific Django auth group.
+
+```python
+GroupCondition("editors")
+```
+
+Calls `user.groups.filter(name=...).exists()` internally.
+
+### TimeWindowCondition
+
+Checks if the current local time falls within a window. Handles overnight windows (e.g. 22:00-06:00) and optional day-of-week filtering using Python weekday convention (0=Monday, 6=Sunday).
+
+```python
+from datetime import time
+
+# Business hours, weekdays only
+TimeWindowCondition(time(9, 0), time(17, 0), days=[0, 1, 2, 3, 4])
+
+# Overnight maintenance window, every day
+TimeWindowCondition(time(2, 0), time(5, 0))
+```
+
+### DateRangeCondition
+
+Checks if the current local date is within a range (inclusive on both ends). Either bound can be `None` for an open-ended range.
+
+```python
+from datetime import date
+
+# Available only during Q1 2026
+DateRangeCondition(date(2026, 1, 1), date(2026, 3, 31))
+
+# Available from launch date onward
+DateRangeCondition(start_date=date(2026, 6, 1))
+
+# Available until sunset date
+DateRangeCondition(end_date=date(2026, 12, 31))
+```
+
+### EnvironmentCondition
+
+Checks an environment variable. If `expected_value` is not provided, checks that the variable exists and is non-empty. If provided, checks for an exact string match.
+
+```python
+# Just check that it's set
+EnvironmentCondition("FEATURE_X_ENABLED")
+
+# Check exact value
+EnvironmentCondition("DEPLOY_ENV", "production")
+```
+
+## Composing Conditions
+
+Conditions support `&` (AND), `|` (OR), and `~` (NOT) operators:
+
+```python
+from django_stratagem import PermissionCondition, FeatureFlagCondition
+
+# Must have permission AND feature flag enabled
+condition = PermissionCondition("myapp.send") & FeatureFlagCondition("notifications_v2")
+
+# Either permission OR staff status
+condition = PermissionCondition("myapp.send") | CallableCondition(lambda ctx: ctx.get("user", None) and ctx["user"].is_staff)
+
+# NOT a condition
+condition = ~SettingCondition("MAINTENANCE_MODE", True)
+```
+
+Compound conditions can also be created directly:
+
+```python
+from django_stratagem import AllConditions, AnyCondition, NotCondition
+
+AllConditions([cond1, cond2, cond3])  # All must pass
+AnyCondition([cond1, cond2, cond3])   # At least one must pass
+NotCondition(cond1)                    # Must fail
+```
+
+## Context-Aware Registry Methods
+
+Registries containing `ConditionalInterface` subclasses have extra methods that filter by a `context` dict:
+
+```python
+context = {"user": request.user, "request": request}
+
+# Get only available implementations
+available = NotificationRegistry.get_available_implementations(context)
+# {"email": <class EmailNotification>, ...}
+
+# Get choices filtered by context
+choices = NotificationRegistry.get_choices_for_context(context)
+# [("email", "Email Notification"), ...]
+
+# Get implementation with context check and fallback
+impl = NotificationRegistry.get_for_context(
+    context,
+    slug="admin_only",
+    fallback="email",
+)
+```
+
+## Writing Custom Conditions
+
+### Database-Backed Conditions
+
+Check a database value, like whether a tenant's plan includes a feature:
+
+```python
+from django_stratagem import Condition
+
+class TenantPlanCondition(Condition):
+    def __init__(self, required_plan):
+        self.required_plan = required_plan
+
+    def is_met(self, context):
+        tenant = context.get("tenant")
+        if not tenant:
+            return False
+        # Assumes tenant has a .plan attribute
+        return tenant.plan in self.required_plan
+
+    def explain(self):
+        return f"Tenant plan must be one of: {self.required_plan}"
+```
+
+Usage:
+
+```python
+class PremiumExport(ConditionalInterface):
+    registry = ExportRegistry
+    slug = "premium_export"
+    condition = TenantPlanCondition(["business", "enterprise"])
+```
+
+### Combining Custom and Built-in Conditions
+
+Conditions compose with `&`, `|`, and `~`:
+
+```python
+from django_stratagem import PermissionCondition, FeatureFlagCondition
+
+class EnterpriseExport(ConditionalInterface):
+    registry = ExportRegistry
+    slug = "enterprise_export"
+    condition = (
+        TenantPlanCondition(["enterprise"])
+        & PermissionCondition("exports.use_enterprise")
+        & FeatureFlagCondition("enterprise_exports_enabled")
+    )
+```
+
+---
+
+<!-- source: docs/howto-hierarchies.md -->
+
+# How to Use Hierarchical Registries
+
+Define parent-child relationships between registries so that child choices depend on a parent selection.
+
+## Defining Hierarchical Registries
+
+```python
+from django_stratagem import Registry, HierarchicalRegistry, Interface, HierarchicalInterface
+
+class CategoryRegistry(Registry):
+    implementations_module = "categories"
+
+class SubcategoryRegistry(HierarchicalRegistry):
+    implementations_module = "subcategories"
+    parent_registry = CategoryRegistry
+
+class Electronics(Interface):
+    registry = CategoryRegistry
+    slug = "electronics"
+
+class Phones(HierarchicalInterface):
+    registry = SubcategoryRegistry
+    slug = "phones"
+    parent_slug = "electronics"  # Only valid under electronics
+```
+
+## HierarchicalInterface
+
+Extends `Interface` with parent validation:
+
+`parent_slug`
+: Single parent slug this implementation is valid for.
+
+`parent_slugs`
+: List of parent slugs this implementation is valid for.
+
+If neither is set, the implementation is valid for all parents.
+
+```python
+class MultiParentChild(HierarchicalInterface):
+    registry = SubcategoryRegistry
+    slug = "accessories"
+    parent_slugs = ["electronics", "clothing"]  # Valid under multiple parents
+
+    @classmethod
+    def is_valid_for_parent(cls, parent_slug: str) -> bool:
+        # Automatically checks parent_slug / parent_slugs
+        ...
+```
+
+## Key Methods
+
+```python
+# Get the parent registry
+SubcategoryRegistry.get_parent_registry()  # CategoryRegistry
+
+# Get children valid for a specific parent
+children = SubcategoryRegistry.get_children_for_parent("electronics")
+# {"phones": <class Phones>, ...}
+
+# Get choices filtered by parent
+choices = SubcategoryRegistry.get_choices_for_parent("electronics")
+# [("phones", "Phones"), ...]
+
+# Validate a parent-child relationship
+SubcategoryRegistry.validate_parent_child_relationship("electronics", "phones")  # True
+
+# Get the full hierarchy map
+hierarchy = SubcategoryRegistry.get_hierarchy_map()
+# {"electronics": ["phones", "tablets"], "clothing": ["shirts"]}
+```
+
+## RegistryRelationship
+
+Manages the global parent-child relationship graph:
+
+```python
+from django_stratagem import RegistryRelationship
+
+# Get child registries for a parent
+children = RegistryRelationship.get_children_registries(CategoryRegistry)
+
+# Get all descendants recursively
+descendants = RegistryRelationship.get_all_descendants(CategoryRegistry)
+
+# Clear all relationships (useful in tests)
+RegistryRelationship.clear_relationships()
+```
+
+## Using in Models
+
+Hierarchical registries work with `HierarchicalRegistryField` to enforce parent-child validation at the model level:
+
+```python
+from django_stratagem import HierarchicalRegistryField
+
+class MyModel(models.Model):
+    category = CategoryRegistry.choices_field()
+    subcategory = HierarchicalRegistryField(
+        registry=SubcategoryRegistry,
+        parent_field="category",
+    )
+```
+
+See [How to Use Model Fields](howto-fields.md#hierarchicalregistryfield) for details.
+
+## Using in Forms
+
+Use `HierarchicalRegistryFormField` and `HierarchicalFormMixin` to build forms with dependent dropdowns:
+
+```python
+from django_stratagem import HierarchicalRegistryFormField, HierarchicalFormMixin
+
+class MyForm(HierarchicalFormMixin, forms.ModelForm):
+    class Meta:
+        model = MyModel
+        fields = ["category", "subcategory"]
+```
+
+See [How to Use Forms, Widgets, and the Admin](howto-forms-admin.md) for details.
+
+## Using in the Admin
+
+`HierarchicalRegistryAdmin` handles hierarchical fields automatically with JavaScript-driven dynamic updates:
+
+```python
+from django_stratagem.admin import HierarchicalRegistryAdmin
+
+@admin.register(MyModel)
+class MyModelAdmin(HierarchicalRegistryAdmin):
+    pass
+```
+
+See [How to Use Forms, Widgets, and the Admin](howto-forms-admin.md#hierarchicalregistryadmin) for details.
+
+---
+
+<!-- source: docs/howto-drf.md -->
+
+# How to Use DRF Integration
+
+django-stratagem has optional Django REST Framework support for serializing registry choices in API endpoints.
+
+## Installation
+
+Install with DRF support:
+
+```bash
+pip install django-stratagem[drf]
+```
+
+## DrfRegistryField
+
+A DRF `ChoiceField` for single registry selection. Accepts slugs or fully qualified names (FQNs) as input and returns the implementation class as internal value.
+
+```python
+from rest_framework import serializers
+from django_stratagem.drf.serializers import DrfRegistryField
+
+class NotificationSerializer(serializers.Serializer):
+    strategy = DrfRegistryField(registry=NotificationRegistry)
+```
+
+Parameters:
+
+`registry`
+: The registry class. Required.
+
+`representation`
+: How to serialize values. `"slug"` (default) outputs the slug, otherwise outputs the FQN.
+
+## DrfMultipleRegistryField
+
+A DRF `MultipleChoiceField` for multiple registry selection.
+
+```python
+from django_stratagem.drf.serializers import DrfMultipleRegistryField
+
+class NotificationSerializer(serializers.Serializer):
+    strategies = DrfMultipleRegistryField(registry=NotificationRegistry)
+```
+
+## Backward Compatibility Aliases
+
+- `DrfStrategyField` = `DrfRegistryField`
+- `DrfMultipleStrategyField` = `DrfMultipleRegistryField`
+
+## API Views
+
+Two built-in views return registry data as JSON:
+
+### RegistryChoicesAPIView
+
+Returns choices for a registry, optionally filtered by parent.
+
+```
+GET /api/registry/choices/?registry=NotificationRegistry
+GET /api/registry/choices/?registry=SubcategoryRegistry&parent=electronics
+```
+
+Response:
+
+```json
+{
+    "choices": [["email", "Email Notification"], ["sms", "SMS Notification"]],
+    "registry": "NotificationRegistry",
+    "parent": null
+}
+```
+
+### RegistryHierarchyAPIView
+
+Returns hierarchy maps for all hierarchical registries.
+
+```
+GET /api/registry/hierarchy/
+```
+
+Response:
+
+```json
+{
+    "hierarchies": {
+        "SubcategoryRegistry": {
+            "parent_registry": "CategoryRegistry",
+            "hierarchy_map": {
+                "electronics": ["phones", "tablets"],
+                "clothing": ["shirts"]
+            }
+        }
+    }
+}
+```
+
+## URL Configuration
+
+Include the DRF URLs in your `urlpatterns`:
+
+```python
+from django.urls import include, path
+
+urlpatterns = [
+    path("stratagem/", include("django_stratagem.drf.urls")),
+]
+```
+
+This registers:
+- `stratagem/api/registry/choices/` - `RegistryChoicesAPIView`
+- `stratagem/api/registry/hierarchy/` - `RegistryHierarchyAPIView`
+
+---
+
+<!-- source: docs/howto-plugins.md -->
+
+# How to Use the Plugin System
+
+Third-party packages can add implementations to your registries without changing your code. A plugin is a normal Python package that declares its implementations via an [entry point](https://packaging.python.org/en/latest/specifications/entry-points/) - when installed, they appear in the target registry automatically.
+
+## Writing a Plugin
+
+A plugin is an ordinary Python package with two things: one or more option classes and a small metadata module.
+
+### Step 1: Write the option classes
+
+The classes look exactly like any other option you'd write in your own app. They subclass the host app's interface and set a `slug`:
+
+```python
+# django_slack_notifications/notifications.py
+from myapp.registry import NotificationInterface
+
+class SlackNotification(NotificationInterface):
+    slug = "slack"
+    description = "Send notifications to a Slack channel"
+    priority = 30
+
+    def send(self, message, recipient):
+        # post to Slack API...
+        return True
+
+class TeamsNotification(NotificationInterface):
+    slug = "teams"
+    description = "Send notifications via Microsoft Teams"
+    priority = 40
+
+    def send(self, message, recipient):
+        # post to Teams API...
+        return True
+```
+
+### Step 2: Create the plugin metadata module
+
+This module tells django-stratagem which registry to add the options to and where the classes live:
+
+```python
+# django_slack_notifications/stratagem_plugin.py
+
+__version__ = "1.0.0"
+
+# The name of the registry class these options belong to
+REGISTRY = "NotificationRegistry"
+
+# Dotted paths to the option classes
+IMPLEMENTATIONS = [
+    "django_slack_notifications.notifications.SlackNotification",
+    "django_slack_notifications.notifications.TeamsNotification",
+]
+```
+
+### Step 3: Register the entry point
+
+In the plugin's `pyproject.toml`, declare an entry point so django-stratagem can find the metadata module:
+
+```toml
+[project.entry-points."django_stratagem.plugins"]
+slack_notifications = "django_slack_notifications.stratagem_plugin"
+```
+
+The key (`slack_notifications`) is the plugin's name used in `ENABLED_PLUGINS` / `DISABLED_PLUGINS` settings. The value is the dotted path to the metadata module from step 2.
+
+Once installed, the Slack and Teams options show up in `NotificationRegistry` - in forms, admin, and API responses - without modifying the host app.
+
+## Using Plugins
+
+Plugins are loaded by default. During startup, `discover_implementations()` picks up any installed plugins that target your registry.
+
+If you need to control which plugins are active:
+
+```python
+# settings.py
+DJANGO_STRATAGEM = {
+    # Allow only specific plugins (None means allow all, which is the default)
+    "ENABLED_PLUGINS": ["slack_notifications", "another_plugin"],
+
+    # Or block specific plugins while allowing everything else
+    "DISABLED_PLUGINS": ["unwanted_plugin"],
+}
+```
+
+## How Plugin Discovery Works
+
+1. During app startup, each registry's `discover_implementations()` calls `PluginLoader.load_plugin_implementations()`
+2. `PluginLoader` scans the `django_stratagem.plugins` entry point group using Python's `importlib.metadata`
+3. Each entry point module is loaded and its `REGISTRY`, `IMPLEMENTATIONS`, and `__version__` attributes are read into a `PluginInfo` dataclass
+4. The plugin is checked against `ENABLED_PLUGINS` / `DISABLED_PLUGINS` settings
+5. Each implementation class path is imported and registered with the target registry, just as if it had been defined locally
+
+## PluginProtocol and PluginInfo
+
+For type checking, plugins conform to `PluginProtocol`:
+
+```python
+class PluginProtocol(Protocol):
+    name: str              # Plugin name (from the entry point key)
+    version: str           # Version string
+    registry: str          # Target registry class name
+    implementations: list[str]  # Dotted paths to option classes
+    enabled: bool = True
+```
+
+`PluginInfo` is the concrete `@dataclass` that `PluginLoader` creates internally. You don't need to use either of these directly unless you're building tooling around the plugin system.
+
+---
+
+<!-- source: docs/explanation.md -->
+
+# Architecture and Design
+
+This page covers how django-stratagem works internally and why it was designed this way.
+
+## Architecture Overview
+
+django-stratagem uses Python metaclasses and `__init_subclass__` to build a registration system that requires no manual wiring:
+
+1. **Metaclass-based registry** - `RegistryMeta` enables `in`, `iter`, and `len` on Registry classes directly (e.g., `EmailNotification in NotificationRegistry`).
+2. **Auto-registration via `__init_subclass__`** - When you define a class that subclasses `Interface` with both `registry` and `slug` set, Python's `__init_subclass__` hook fires and calls `Registry.register()` automatically.
+3. **Fully qualified name (FQN) storage** - Model fields store FQNs (e.g., `"myapp.notifications.EmailNotification"`) as plain `CharField` values. This avoids foreign keys, content types, or any schema coupling.
+4. **Descriptor-based access** - Each field type has a paired descriptor that handles conversion between the stored string and the Python class or instance.
+
+## The `register()` Decorator
+
+As an alternative to auto-registration via `Interface.__init_subclass__`, you can use the `register()` decorator for explicit registration:
+
+```python
+from django_stratagem import register
+
+@register(NotificationRegistry)
+class WebhookNotification:
+    slug = "webhook"
+    description = "Send via webhook"
+
+    def send(self, message, recipient):
+        ...
+```
+
+Use this when you don't want to subclass `Interface` or when registering third-party classes.
+
+## How Auto-Discovery Works
+
+The following diagram shows the startup lifecycle:
+
+```{mermaid}
+flowchart TD
+    A[Django starts] --> B[AppConfig.ready]
+    B --> C{Running migrations?}
+    C -->|Yes| D[Skip all registry ops]
+    C -->|No| E[discover_registries]
+    E --> F[autodiscover_modules 'registry']
+    F --> G[For each registry in django_stratagem_registry]
+    G --> H[clear_cache]
+    H --> I[discover_implementations]
+    I --> J[autodiscover_modules implementations_module]
+    J --> K[Interface.__init_subclass__ triggers register]
+    K --> L[PluginLoader.load_plugin_implementations]
+    L --> M[Send registry_reloaded signal]
+    M --> N[update_choices_fields]
+    N --> O[Set model field choices from registry]
+```
+
+### Step by Step
+
+The same sequence in detail:
+
+1. **Django starts** - `DjangoStratagemAppConfig.ready()` is called.
+2. **Migration check** - `is_running_migrations()` checks `sys.argv` for `migrate`/`makemigrations`. If running migrations, all registry operations are skipped to avoid import errors.
+3. **`discover_registries()`** - Calls `autodiscover_modules("registry")`, then for each registry class in `django_stratagem_registry`:
+   - Clears the cache
+   - Calls `discover_implementations()`, which runs `autodiscover_modules(implementations_module)` to import implementation modules
+   - When implementation modules are imported, `Interface.__init_subclass__` fires and calls `Registry.register()` for each subclass that has both `registry` and `slug` set
+   - `PluginLoader.load_plugin_implementations()` loads any plugin-provided implementations
+   - Sends the `registry_reloaded` signal
+4. **`update_choices_fields()`** - For each registry, sets the `choices` attribute on any model fields registered via `choices_fields`.
+
+## Migration Safety
+
+The `is_running_migrations()` function in `utils.py` detects migration commands and caches the result for the process lifetime. The `skip_during_migrations` decorator and direct checks in `fields.py` and `apps.py` prevent:
+
+- Auto-discovery from running during migrations
+- Choice population from running during migrations
+- Class imports in field descriptors from failing during migrations
+
+## Design Decisions
+
+### Why fully qualified names in the database?
+
+Storing FQNs like `"myapp.notifications.EmailNotification"` as plain strings:
+
+- **No schema coupling** - No foreign keys, content types, or extra tables. Adding or removing implementations never requires a migration.
+- **Human-readable** - You can read the database value and immediately know what class it refers to.
+- **Portable** - Values are self-contained strings that work across environments without needing matching database records.
+
+The trade-off is that renaming or moving a class requires updating stored values. In practice, implementation classes are rarely renamed.
+
+### Why autodiscovery?
+
+Autodiscovery (importing modules matching `implementations_module` from all installed apps) follows the pattern established by Django's admin autodiscovery. It means:
+
+- Adding a new implementation is one file, zero configuration
+- No manual registration lists to maintain
+- No settings to update
+
+The `register()` decorator provides an opt-out for cases where autodiscovery doesn't fit.
+
+### Why classmethods on Registry?
+
+All registry operations (`get()`, `get_choices()`, `register()`, etc.) are classmethods rather than instance methods. This means you never need to instantiate a registry - you interact with it as a class:
+
+```python
+NotificationRegistry.get(slug="email")
+NotificationRegistry.get_choices()
+"email" in NotificationRegistry
+```
+
+A registry is a global, singleton-like container - there's exactly one `NotificationRegistry` for the application, so there's nothing to instantiate.
+
+## Management Commands
+
+Three management commands help you inspect and manage registries at runtime.
+
+### list_registries
+
+List all registered registries and their implementations.
+
+```bash
+python manage.py list_registries
+python manage.py list_registries --format json
+```
+
+Shows: registry name, module, implementation count, slugs, classes, descriptions, priorities, conditions, and parent requirements.
+
+### clear_registries_cache
+
+Clear cache for all registries.
+
+```bash
+python manage.py clear_registries_cache
+```
+
+### initialize_registries
+
+Re-discover and initialize all registries, then update model field choices.
+
+```bash
+python manage.py initialize_registries
+python manage.py initialize_registries --force --clear-cache
+python manage.py initialize_registries -v 2  # Show health checks
+```
+
+Options:
+- `--force` - Force initialization even if already initialized
+- `--clear-cache` - Clear all caches before initialization
+
+---
+
+<!-- source: docs/hooks.md -->
+
+# Extension Hooks and Customization Points
+
+You can extend django-stratagem in several ways. This page covers hook methods, overridable methods, signals, and patterns for testing your extensions.
+
+## Hook Methods Overview
+
+The `Registry` class provides four hook methods that let you customize the registration lifecycle without replacing `register()` or `unregister()` entirely.
+
+| Hook | Called by | When | Default behavior |
+|---|---|---|---|
+| `validate_implementation(implementation)` | `register()` | Before storage | Checks slug exists and interface subclass |
+| `build_implementation_meta(implementation)` | `register()` | After validation | Returns `{klass, description, icon, priority}` |
+| `on_register(slug, implementation, meta)` | `register()` | After storage, before signal | No-op |
+| `on_unregister(slug, meta)` | `unregister()` | After removal, before signal | No-op |
+
+All four are classmethods. Override them in your `Registry` subclass and call `super()` to preserve default behavior.
+
+## validate_implementation
+
+Called before an implementation is stored. Raise any exception to reject registration.
+
+```python
+from django_stratagem import Registry
+
+class StrictNotificationRegistry(Registry):
+    implementations_module = "notifications"
+
+    @classmethod
+    def validate_implementation(cls, implementation):
+        # Preserve default slug + interface checks
+        super().validate_implementation(implementation)
+
+        # Require a send() method
+        if not callable(getattr(implementation, "send", None)):
+            raise TypeError(
+                f"{implementation.__name__} must define a send() method"
+            )
+```
+
+If `validate_implementation` raises, `register()` stops immediately - the implementation is not stored, `on_register` is not called, and no signal is emitted.
+
+## build_implementation_meta
+
+Called after validation. Returns the metadata dict that will be stored in `registry.implementations[slug]`. Override to add custom metadata fields.
+
+```python
+from datetime import datetime
+from django_stratagem import Registry
+
+class AuditableRegistry(Registry):
+    implementations_module = "strategies"
+
+    @classmethod
+    def build_implementation_meta(cls, implementation):
+        meta = super().build_implementation_meta(implementation)
+        meta["version"] = getattr(implementation, "version", "0.0.0")
+        meta["author"] = getattr(implementation, "author", "unknown")
+        meta["registered_at"] = datetime.now().isoformat()
+        return meta
+```
+
+The extra keys are stored alongside the standard `klass`, `description`, `icon`, and `priority` keys. They are available through `get_implementation_meta()` and are passed to `on_register` and `on_unregister`.
+
+## on_register and on_unregister
+
+Called after the implementation is stored (or removed) and cache is cleared, but before the Django signal is emitted. Use these for side effects like audit logging, metrics, or cache warming.
+
+```python
+import logging
+from django_stratagem import Registry
+
+logger = logging.getLogger(__name__)
+
+class LoggingRegistry(Registry):
+    implementations_module = "strategies"
+
+    @classmethod
+    def on_register(cls, slug, implementation, meta):
+        logger.info(
+            "Registered %s (priority=%d) in %s",
+            slug, meta.get("priority", 0), cls.__name__,
+        )
+
+    @classmethod
+    def on_unregister(cls, slug, meta):
+        logger.info("Unregistered %s from %s", slug, cls.__name__)
+```
+
+## Execution Order
+
+### register()
+
+```
+1. validate_implementation(implementation)  -- may raise
+2. slug = implementation.slug
+3. meta = build_implementation_meta(implementation)
+4. implementations[slug] = meta
+5. clear_cache()
+6. on_register(slug, implementation, meta)
+7. implementation_registered signal sent
+```
+
+### unregister()
+
+```
+1. Check slug exists (raises ImplementationNotFound if missing)
+2. meta = implementations.pop(slug)
+3. clear_cache()
+4. on_unregister(slug, meta)
+5. implementation_unregistered signal sent
+```
+
+## Overridable Methods
+
+Beyond the four hooks, several Registry methods are designed for overriding:
+
+`get_display_name(implementation)`
+: Customize how implementations are labeled in choices, admin, and templates.
+
+```python
+class MyRegistry(Registry):
+    implementations_module = "strategies"
+
+    @classmethod
+    def get_display_name(cls, implementation):
+        icon = getattr(implementation, "icon", "")
+        name = super().get_display_name(implementation)
+        return f"{icon} {name}" if icon else name
+```
+
+`get_cache_key(suffix)`
+: Customize cache key format (e.g. for multi-tenant isolation).
+
+```python
+class TenantRegistry(Registry):
+    implementations_module = "strategies"
+
+    @classmethod
+    def get_cache_key(cls, suffix):
+        from threading import current_thread
+        tenant = getattr(current_thread(), "tenant_id", "default")
+        return f"django_stratagem:{tenant}:{cls.__name__}:{suffix}"
+```
+
+`is_valid(value)`
+: Customize what counts as a valid implementation reference.
+
+## When to Use Hooks vs Signals
+
+Use **hooks** when:
+
+- You need to reject or modify registrations (validation, meta enrichment)
+- The behavior is specific to one registry subclass
+- You need guaranteed ordering relative to storage and cache clearing
+
+Use **signals** when:
+
+- Multiple unrelated listeners need to react to registrations
+- The listener is defined outside the registry (e.g. a separate app)
+- You want loose coupling between the registry and the reaction
+
+## Signals
+
+django-stratagem emits three Django signals:
+
+### implementation_registered
+
+Sent when an implementation is registered with a registry.
+
+```python
+from django.dispatch import receiver
+from django_stratagem.signals import implementation_registered
+
+@receiver(implementation_registered)
+def on_registered(sender, registry, implementation, **kwargs):
+    print(f"{implementation.slug} registered in {registry.__name__}")
+```
+
+- `sender` - The registry class
+- `registry` - The registry class
+- `implementation` - The implementation class
+
+### implementation_unregistered
+
+Sent when an implementation is unregistered.
+
+```python
+from django.dispatch import receiver
+from django_stratagem.signals import implementation_unregistered
+
+@receiver(implementation_unregistered)
+def on_unregistered(sender, registry, slug, **kwargs):
+    print(f"{slug} unregistered from {registry.__name__}")
+```
+
+- `sender` - The registry class
+- `registry` - The registry class
+- `slug` - The slug that was unregistered
+
+### registry_reloaded
+
+Sent when a registry is reloaded during `discover_registries()`.
+
+```python
+from django.dispatch import receiver
+from django_stratagem.signals import registry_reloaded
+
+@receiver(registry_reloaded)
+def on_reloaded(sender, registry, **kwargs):
+    print(f"{registry.__name__} reloaded")
+```
+
+- `sender` - The registry class
+- `registry` - The registry class
+
+## Signal Use Cases
+
+### Invalidate External Caches on Registration
+
+```python
+from django.dispatch import receiver
+from django_stratagem.signals import implementation_registered, implementation_unregistered
+
+@receiver(implementation_registered)
+@receiver(implementation_unregistered)
+def invalidate_api_cache(sender, **kwargs):
+    """Clear API response cache when implementations change."""
+    from django.core.cache import cache
+    cache.delete(f"api:registry:{sender.__name__}:choices")
+```
+
+### Audit Trail on Unregister
+
+```python
+from django.dispatch import receiver
+from django_stratagem.signals import implementation_unregistered
+
+@receiver(implementation_unregistered)
+def log_unregistration(sender, registry, slug, **kwargs):
+    from myapp.models import AuditLog
+    AuditLog.objects.create(
+        action="implementation_unregistered",
+        registry=registry.__name__,
+        slug=slug,
+    )
+```
+
+### Warm Caches After Reload
+
+```python
+from django.dispatch import receiver
+from django_stratagem.signals import registry_reloaded
+
+@receiver(registry_reloaded)
+def warm_caches(sender, registry, **kwargs):
+    """Pre-populate choices and items caches after reload."""
+    registry.get_choices()
+    registry.get_items()
+```
+
+## Testing Extensions
+
+### Temporary Registries
+
+Create isolated registries in tests to avoid polluting the global state. The conftest `_clean_stratagem_registry` fixture (included by default) restores the global registry list after each test.
+
+```python
+from django_stratagem import Registry, Interface
+
+def test_my_custom_validation():
+    class TestRegistry(Registry):
+        implementations_module = "test_impls"
+
+        @classmethod
+        def validate_implementation(cls, implementation):
+            super().validate_implementation(implementation)
+            if not hasattr(implementation, "process"):
+                raise ValueError("Must define process()")
+
+    TestRegistry.implementations = {}
+
+    class Good(Interface):
+        slug = "good"
+        registry = None  # Don't auto-register
+
+        def process(self):
+            pass
+
+    class Bad(Interface):
+        slug = "bad"
+        registry = None
+
+    TestRegistry.register(Good)
+    assert "good" in TestRegistry.implementations
+
+    with pytest.raises(ValueError, match="process"):
+        TestRegistry.register(Bad)
+```
+
+### Testing Hook Ordering
+
+Verify that hooks run in the expected order relative to signals:
+
+```python
+def test_hook_runs_before_signal():
+    call_order = []
+
+    class OrderedRegistry(Registry):
+        implementations_module = "ordered_impls"
+
+        @classmethod
+        def on_register(cls, slug, implementation, meta):
+            call_order.append("hook")
+
+    def signal_handler(sender, **kwargs):
+        call_order.append("signal")
+
+    from django_stratagem.signals import implementation_registered
+    implementation_registered.connect(signal_handler)
+
+    OrderedRegistry.implementations = {}
+
+    class Impl(Interface):
+        slug = "test"
+        registry = None
+
+    try:
+        OrderedRegistry.register(Impl)
+        assert call_order == ["hook", "signal"]
+    finally:
+        implementation_registered.disconnect(signal_handler)
+```
+
+### Testing Custom Conditions
+
+```python
+from django_stratagem import Condition
+
+class MinItemsCondition(Condition):
+    def __init__(self, min_count):
+        self.min_count = min_count
+
+    def is_met(self, context):
+        return context.get("item_count", 0) >= self.min_count
+
+    def explain(self):
+        return f"Requires at least {self.min_count} items"
+
+def test_min_items_condition():
+    cond = MinItemsCondition(5)
+    assert not cond.is_met({"item_count": 3})
+    assert cond.is_met({"item_count": 5})
+    assert cond.is_met({"item_count": 10})
+
+def test_condition_composition():
+    cond = MinItemsCondition(5) & MinItemsCondition(10)
+    assert not cond.is_met({"item_count": 7})
+    assert cond.is_met({"item_count": 10})
+```
+
+---
+
+<!-- source: docs/api.md -->
+
+# API Reference
+
+Full reference for the public API. For narrative documentation and examples, see the [quickstart](quickstart.md) and [how-to guides](howto-fields.md).
+
+## `django_stratagem.registry`
+
+### `Registry`
+
+```python
+class Registry(Generic[TInterface], metaclass=RegistryMeta)
+```
+
+Base class to define and manage registries of Interface implementations.
+
+**Class Attributes:**
+
+- `implementations_module: str` - Name of the module to autodiscover for implementations.
+- `implementations: dict[str, ImplementationMeta]` - Map of slug to implementation metadata. Populated automatically.
+- `choices_fields: list[tuple[str, type[Model]]]` - List of (field_name, model_class) tuples for fields whose choices should be updated from this registry.
+- `label_attribute: str | None` - Optional attribute name to use for display labels instead of the class name.
+- `interface_class: type[TInterface] | None` - Optional interface class to validate implementations against.
+
+**Class Methods:**
+
+- `register(implementation)` - Register an implementation class. Calls hooks and emits `implementation_registered` signal.
+- `unregister(slug)` - Unregister by slug. Calls hooks and emits `implementation_unregistered` signal. Raises `ImplementationNotFound` if not found.
+- `discover_implementations()` - Autodiscover and load implementations from `implementations_module` and plugins.
+- `get(*, slug=None, fully_qualified_name=None) -> TInterface` - Instantiate and return an implementation by slug or fully qualified name (FQN). Raises `ImplementationNotFound`.
+- `get_or_default(*, slug=None, fully_qualified_name=None, default=None) -> TInterface | None` - Like `get()` but returns `None` or a default on failure.
+- `get_class(*, slug=None, fully_qualified_name=None) -> type[TInterface]` - Return the class without instantiating.
+- `get_implementation_class(slug) -> type[TInterface]` - Get implementation class by slug.
+- `get_implementation_meta(slug) -> ImplementationMeta` - Get full metadata for an implementation.
+- `get_choices() -> list[tuple[str, str]]` - Return cached (slug, label) pairs sorted by priority.
+- `get_display_name(implementation) -> str` - Human-readable label for an implementation.
+- `get_items() -> list[tuple[str, type[TInterface]]]` - Cached list of (slug, class) pairs.
+- `get_available_implementations(context=None) -> dict[str, type[TInterface]]` - Implementations available in context.
+- `get_choices_for_context(context=None) -> list[tuple[str, str]]` - Choices filtered by context.
+- `get_for_context(context=None, *, slug=None, fully_qualified_name=None, fallback=None) -> TInterface` - Get implementation with context check and fallback.
+- `is_valid(value) -> bool` - Check if value (string, class, or instance) is a registered implementation.
+- `contains(item) -> bool` - Alias for `is_valid()`.
+- `iter_implementations()` - Iterator over implementation metadata dicts.
+- `count_implementations() -> int` - Number of implementations.
+- `choices_field(*args, **kwargs) -> AbstractRegistryField` - Factory for `RegistryClassField` tied to this registry.
+- `instance_field(*args, **kwargs) -> AbstractRegistryField` - Factory for `RegistryField` tied to this registry.
+- `clear_cache()` - Evict this registry's cache entries.
+- `clear_all_cache()` - Static method. Evict cache for all registries.
+- `check_health() -> dict[str, object]` - Basic health metrics (`count`, `last_updated`).
+- `get_cache_key(suffix) -> str` - Construct cache key string.
+
+**Extension Hooks:**
+
+Override these classmethods to customize the registration lifecycle. See [Extension Hooks and Customization Points](hooks.md) for examples and patterns.
+
+- `validate_implementation(implementation)` - Called by `register()` before storage. Raise to reject. Default checks slug and interface subclass.
+- `build_implementation_meta(implementation) -> dict[str, Any]` - Called by `register()` after validation. Returns metadata dict. Default returns `{klass, description, icon, priority}`. Override to add custom keys.
+- `on_register(slug, implementation, meta)` - Called after storage and cache clear, before signal. Default: no-op.
+- `on_unregister(slug, meta)` - Called after removal and cache clear, before signal. Default: no-op. Receives the popped metadata dict.
+
+**Metaclass Behavior (`RegistryMeta`):**
+
+- `"slug" in MyRegistry` - Check if slug is valid via `is_valid()`.
+- `for impl in MyRegistry` - Iterate over implementation classes.
+- `len(MyRegistry)` - Number of implementations.
+
+### `HierarchicalRegistry`
+
+```python
+class HierarchicalRegistry(Registry)
+```
+
+Registry that supports parent-child relationships.
+
+**Additional Class Attributes:**
+
+- `parent_registry: type[Registry] | None` - The parent registry class.
+- `parent_slugs: list[str] | None` - Restrict to specific parent slugs.
+
+**Additional Class Methods:**
+
+- `get_parent_registry() -> type[Registry] | None`
+- `get_children_for_parent(parent_slug, context=None) -> dict[str, type[Interface]]`
+- `get_choices_for_parent(parent_slug, context=None) -> list[tuple[str, str]]`
+- `validate_parent_child_relationship(parent_slug, child_slug) -> bool`
+- `get_hierarchy_map() -> dict[str, list[str]]` - Cached map of parent slugs to child slugs.
+
+### `RegistryRelationship`
+
+```python
+class RegistryRelationship
+```
+
+Manages relationships between parent and child registries.
+
+**Class Methods:**
+
+- `register_child(parent_registry, child_registry)` - Register a parent-child relationship.
+- `get_children_registries(parent_registry) -> list[type[Registry]]`
+- `get_all_descendants(registry) -> list[type[Registry]]` - Recursive.
+- `clear_relationships()` - Clear all relationships.
+
+### `ImplementationMeta`
+
+```python
+class ImplementationMeta(TypedDict)
+```
+
+- `klass: type[Any] | None` - The implementation class.
+- `description: str`
+- `icon: str`
+- `priority: int`
+
+### Functions
+
+- `discover_registries()` - Re-run auto-discovery for all registries, clearing caches first. Called during app startup; you rarely need to call this directly.
+- `update_choices_fields()` - Set model fields' choices from each registry.
+- `register(registry_cls) -> Callable` - Decorator for explicit registration.
+
+### Module-Level
+
+- `django_stratagem_registry: list[type[Registry]]` - Global list of all registry classes.
+
+---
+
+## `django_stratagem.interfaces`
+
+### `Interface`
+
+```python
+class Interface
+```
+
+Base class for implementation interfaces. Auto-registers subclasses that have both `registry` and `slug` set.
+
+**Class Attributes:**
+
+- `slug: str` - Unique identifier within the registry.
+- `registry: type[Registry] | None` - Registry to register with.
+- `description: str` - Human-readable description. Default: `""`.
+- `icon: str` - Icon URL or identifier. Default: `""`.
+- `priority: int` - Sort order (lower = higher priority). Default: `0`.
+
+### `HierarchicalInterface`
+
+```python
+class HierarchicalInterface(Interface)
+```
+
+**Additional Class Attributes:**
+
+- `parent_slug: str | None` - Single parent slug requirement.
+- `parent_slugs: list[str] | None` - Multiple parent slug requirements.
+
+**Class Methods:**
+
+- `is_valid_for_parent(parent_slug) -> bool`
+
+### `ConditionalInterface`
+
+```python
+class ConditionalInterface(Interface)
+```
+
+**Additional Class Attributes:**
+
+- `condition: Condition | None` - Condition for availability.
+
+**Class Methods:**
+
+- `is_available(context=None) -> bool`
+
+---
+
+## `django_stratagem.conditions`
+
+### `Condition`
+
+```python
+class Condition(ABC)
+```
+
+Abstract base class for conditions. Subclass this and implement `is_met(context)` to create custom conditions.
+
+- `is_met(context: dict) -> bool` - Abstract. Check if condition is met.
+- `explain() -> str` - Human-readable description.
+- `check_with_details(context) -> tuple[bool, str]` - Result with explanation.
+- `__and__(other) -> AllConditions`
+- `__or__(other) -> AnyCondition`
+- `__invert__() -> NotCondition`
+
+### `CompoundCondition`
+
+```python
+class CompoundCondition(Condition)
+```
+
+Base class for compound conditions.
+
+- `__init__(conditions: list[Condition])`
+
+### `AllConditions`
+
+```python
+class AllConditions(CompoundCondition)
+```
+
+All conditions must be met (AND logic).
+
+### `AnyCondition`
+
+```python
+class AnyCondition(CompoundCondition)
+```
+
+At least one condition must be met (OR logic).
+
+### `NotCondition`
+
+```python
+class NotCondition(Condition)
+```
+
+Negates a condition.
+
+- `__init__(condition: Condition)`
+
+### `FeatureFlagCondition`
+
+```python
+class FeatureFlagCondition(Condition)
+```
+
+- `__init__(flag_name: str)` - Checks `settings.FEATURE_FLAGS[flag_name]` or `waffle.flag_is_active()`.
+
+### `PermissionCondition`
+
+```python
+class PermissionCondition(Condition)
+```
+
+- `__init__(permission: str)` - Checks `user.has_perm(permission)` from `context["user"]`.
+
+### `SettingCondition`
+
+```python
+class SettingCondition(Condition)
+```
+
+- `__init__(setting_name: str, expected_value: Any)` - Checks `getattr(settings, setting_name) == expected_value`.
+
+### `CallableCondition`
+
+```python
+class CallableCondition(Condition)
+```
+
+- `__init__(check_func: Callable[[dict], bool])` - Wraps any callable.
+
+### `AuthenticatedCondition`
+
+```python
+class AuthenticatedCondition(Condition)
+```
+
+No arguments. Checks `context["user"].is_authenticated`. Returns `False` if user is missing or lacks the attribute.
+
+### `StaffCondition`
+
+```python
+class StaffCondition(Condition)
+```
+
+No arguments. Checks `context["user"].is_staff`. Returns `False` if user is missing or lacks the attribute.
+
+### `SuperuserCondition`
+
+```python
+class SuperuserCondition(Condition)
+```
+
+No arguments. Checks `context["user"].is_superuser`. Returns `False` if user is missing or lacks the attribute.
+
+### `GroupCondition`
+
+```python
+class GroupCondition(Condition)
+```
+
+- `__init__(group_name: str)` - Checks `context["user"].groups.filter(name=group_name).exists()`. Returns `False` if user is missing or has no `groups` attribute.
+
+### `TimeWindowCondition`
+
+```python
+class TimeWindowCondition(Condition)
+```
+
+- `__init__(start_time: datetime.time, end_time: datetime.time, days: list[int] | None = None)` - Checks if current local time is within the window. Handles overnight windows (start > end). `days` uses Python weekday convention (0=Monday, 6=Sunday); `None` means every day.
+
+### `DateRangeCondition`
+
+```python
+class DateRangeCondition(Condition)
+```
+
+- `__init__(start_date: datetime.date | None = None, end_date: datetime.date | None = None)` - Checks if current local date is within the range (inclusive). `None` means no bound on that side.
+
+### `EnvironmentCondition`
+
+```python
+class EnvironmentCondition(Condition)
+```
+
+- `__init__(env_var: str, expected_value: str | None = None)` - If `expected_value` is `None`, checks that the env var exists and is non-empty. Otherwise checks for exact string match.
+
+---
+
+## `django_stratagem.fields`
+
+### `AbstractRegistryField`
+
+```python
+class AbstractRegistryField(Field)
+```
+
+Base class for all registry model fields. Internal type: `CharField`.
+
+- `__init__(*args, import_error=None, max_length=200, registry=None, **kwargs)`
+- `contribute_to_class(cls, name, private_only=False)` - Sets up the descriptor.
+- `formfield(...)` - Returns `RegistryFormField` or `RegistryMultipleChoiceFormField`.
+- `choices` - Property that returns `registry.get_choices()`.
+
+### `RegistryClassField`
+
+```python
+class RegistryClassField(AbstractRegistryField)
+```
+
+Returns the implementation class on access. Descriptor: `RegistryClassFieldDescriptor`.
+
+### `RegistryField`
+
+```python
+class RegistryField(RegistryClassField)
+```
+
+Returns an implementation instance on access. Descriptor: `RegistryFieldDescriptor`.
+
+- `__init__(*args, factory=lambda klass, obj: klass(), **kwargs)`
+
+### `MultipleRegistryClassField`
+
+```python
+class MultipleRegistryClassField(AbstractRegistryField)
+```
+
+Stores comma-separated FQNs. Returns list of classes. Descriptor: `MultipleRegistryClassFieldDescriptor`.
+
+### `MultipleRegistryField`
+
+```python
+class MultipleRegistryField(MultipleRegistryClassField)
+```
+
+Returns list of instances. Descriptor: `MultipleRegistryFieldDescriptor`.
+
+- `__init__(*args, factory=lambda klass, obj: klass(), **kwargs)`
+
+### `HierarchicalRegistryField`
+
+```python
+class HierarchicalRegistryField(RegistryField)
+```
+
+- `__init__(*args, parent_field=None, **kwargs)`
+- `get_parent_value(obj) -> str | None`
+- `validate(value, model_instance)` - Validates parent-child relationship.
+
+### `MultipleHierarchicalRegistryField`
+
+```python
+class MultipleHierarchicalRegistryField(MultipleRegistryField)
+```
+
+- `__init__(*args, parent_field=None, **kwargs)`
+
+### Descriptors
+
+- `RegistryClassFieldDescriptor` - `__get__` returns class, `__set__` accepts class/slug/FQN.
+- `RegistryFieldDescriptor` - `__get__` returns instance via `factory(klass, obj)`.
+- `MultipleRegistryClassFieldDescriptor` - `__get__` returns list of classes.
+- `MultipleRegistryFieldDescriptor` - `__get__` returns list of instances.
+- `HierarchicalRegistryFieldDescriptor` - Adds parent-child validation on `__set__`.
+
+---
+
+## `django_stratagem.forms`
+
+### `RegistryFormField`
+
+```python
+class RegistryFormField(ChoiceField)
+```
+
+- `__init__(*args, registry, empty_value="", **kwargs)`
+- `clean(value) -> type` - Returns the implementation class.
+
+### `RegistryMultipleChoiceFormField`
+
+```python
+class RegistryMultipleChoiceFormField(TypedMultipleChoiceField)
+```
+
+- `__init__(*args, registry, **kwargs)`
+- `coerce(value) -> type | None`
+
+### `ContextAwareRegistryFormField`
+
+```python
+class ContextAwareRegistryFormField(RegistryFormField)
+```
+
+- `__init__(*args, context=None, **kwargs)`
+- `set_context(context)` - Update context and refresh choices.
+
+### `HierarchicalRegistryFormField`
+
+```python
+class HierarchicalRegistryFormField(ContextAwareRegistryFormField)
+```
+
+- `__init__(*args, parent_field=None, parent_value=None, **kwargs)`
+- `set_parent_value(parent_value)` - Update parent and refresh choices.
+
+### `RegistryContextMixin`
+
+```python
+class RegistryContextMixin(BaseForm)
+```
+
+- `__init__(*args, registry_context=None, **kwargs)` - Passes context to all `ContextAwareRegistryFormField` fields.
+
+### `HierarchicalFormMixin`
+
+```python
+class HierarchicalFormMixin(BaseForm)
+```
+
+Sets up parent-child relationships and validates them in `clean()`.
+
+---
+
+## `django_stratagem.widgets`
+
+### `RegistryWidget`
+
+```python
+class RegistryWidget(forms.Select)
+```
+
+- `__init__(attrs=None, choices=(), registry=None)`
+- Adds `title`, `data-icon`, `data-priority` attributes to options.
+
+### `HierarchicalRegistryWidget`
+
+```python
+class HierarchicalRegistryWidget(forms.Select)
+```
+
+- `__init__(attrs=None, choices=(), parent_field=None)`
+- Adds `data-parent-field` and `data-hierarchical` attributes.
+
+---
+
+## `django_stratagem.admin`
+
+### `RegistryFieldListFilter`
+
+```python
+class RegistryFieldListFilter(ChoicesFieldListFilter)
+```
+
+Context-aware admin list filter for registry fields. Auto-registered for all `AbstractRegistryField` instances.
+
+### `ContextAwareRegistryAdmin`
+
+```python
+class ContextAwareRegistryAdmin(admin.ModelAdmin)
+```
+
+Injects request context into registry form fields.
+
+### `RegistryListMixin`
+
+```python
+class RegistryListMixin(admin.ModelAdmin)
+```
+
+Adds registry fields to `list_display` and `list_filter`.
+
+### `HierarchicalRegistryAdmin`
+
+```python
+class HierarchicalRegistryAdmin(ContextAwareRegistryAdmin)
+```
+
+Adds hierarchical field support with data attributes for JavaScript.
+
+### `DjangoStratagemAdminSite`
+
+```python
+class DjangoStratagemAdminSite(AdminSite)
+```
+
+Admin site with registry dashboard at `/admin/registry-dashboard/`.
+
+### `EnhancedDjangoStratagemAdminSite`
+
+```python
+class EnhancedDjangoStratagemAdminSite(DjangoStratagemAdminSite)
+```
+
+Enhanced dashboard with hierarchy visualization at `/admin/enhanced-registry-dashboard/`.
+
+---
+
+## `django_stratagem.plugins`
+
+### `PluginProtocol`
+
+```python
+class PluginProtocol(Protocol)
+```
+
+- `name: str`
+- `version: str`
+- `registry: str`
+- `implementations: list[str]`
+- `enabled: bool`
+
+### `PluginInfo`
+
+```python
+@dataclass
+class PluginInfo
+```
+
+Concrete implementation of `PluginProtocol`.
+
+### `PluginLoader`
+
+```python
+class PluginLoader
+```
+
+- `ENTRY_POINT_GROUP = "django_stratagem.plugins"`
+- `discover_plugins() -> list[PluginProtocol]`
+- `load_plugin_implementations(registry_cls)` - Load plugin implementations for a specific registry.
+
+---
+
+## `django_stratagem.drf.serializers`
+
+### `DrfRegistryField`
+
+```python
+class DrfRegistryField(serializers.ChoiceField)
+```
+
+- `__init__(registry, representation="slug", **kwargs)`
+- `to_representation(value) -> str` - Slug or FQN.
+- `to_internal_value(data) -> type` - Returns the implementation class.
+
+### `DrfMultipleRegistryField`
+
+```python
+class DrfMultipleRegistryField(serializers.MultipleChoiceField)
+```
+
+- `__init__(registry, **kwargs)`
+- `to_representation(value) -> list[str]`
+- `to_internal_value(data) -> list[type]`
+
+### Aliases
+
+- `DrfStrategyField = DrfRegistryField`
+- `DrfMultipleStrategyField = DrfMultipleRegistryField`
+
+---
+
+## `django_stratagem.drf.views`
+
+### `RegistryChoicesAPIView`
+
+```python
+class RegistryChoicesAPIView(View)
+```
+
+JSON endpoint: `GET ?registry=Name&parent=slug`
+
+### `RegistryHierarchyAPIView`
+
+```python
+class RegistryHierarchyAPIView(View)
+```
+
+JSON endpoint: `GET` returns hierarchy maps for all hierarchical registries.
+
+---
+
+## `django_stratagem.signals`
+
+```python
+implementation_registered = Signal()   # kwargs: registry, implementation
+implementation_unregistered = Signal() # kwargs: registry, slug
+registry_reloaded = Signal()           # kwargs: registry
+```
+
+---
+
+## `django_stratagem.exceptions`
+
+### `ImplementationNotFound`
+
+```python
+class ImplementationNotFound(KeyError)
+```
+
+### `RegistryNameError`
+
+```python
+class RegistryNameError(ValueError)
+```
+
+- `__init__(name: str, message: str | None = None)`
+
+### `RegistryClassError`
+
+```python
+class RegistryClassError(ValueError)
+```
+
+- `__init__(name: str, message: str | None = None)`
+
+### `RegistryImportError`
+
+```python
+class RegistryImportError(ImportError)
+```
+
+### `RegistryAttributeError`
+
+```python
+class RegistryAttributeError(AttributeError)
+```
+
+- `__init__(name: str, module_path: str, class_str: str, message: str | None = None)`
+
+---
+
+## `django_stratagem.validators`
+
+### `ClassnameValidator`
+
+```python
+@deconstructible
+class ClassnameValidator(BaseValidator)
+```
+
+Validates that a value is a valid, importable class name.
+
+### `RegistryValidator`
+
+```python
+@deconstructible
+class RegistryValidator(ClassnameValidator)
+```
+
+- `__init__(registry: type[Registry], message: str | None = None)`
+
+Validates that a value is registered in a specific registry. Supports single values and lists.
+
+---
+
+## `django_stratagem.utils`
+
+### `is_running_migrations() -> bool`
+
+Check if Django is running `migrate` or `makemigrations`. Result is cached for the process lifetime.
+
+### `import_by_name(name: str) -> Any`
+
+Dynamically load and cache a class by its dotted path. Raises `RegistryNameError` if no dot in name. Raises `RegistryAttributeError` if attribute not found.
+
+### `get_class(value: str | type | None) -> Any`
+
+Get a class from a string reference, return a class as-is, or return the type of an instance.
+
+### `get_fully_qualified_name(obj: Any) -> str`
+
+Returns the fully qualified name (`module.ClassName`) of a class or instance.
+
+### `get_display_string(klass: type, display_attribute: str | None = None) -> str`
+
+Get a human-readable display string for a class, using `display_attribute` if provided, otherwise converting CamelCase to Title Case.
+
+### `camel_to_title(text: str) -> str`
+
+Convert CamelCase to Title Case. Handles consecutive capitals (e.g., `HTTPServer` -> `HTTP Server`).
+
+### `stringify(values: Sequence[Any]) -> str`
+
+Convert a sequence to a sorted, comma-separated string of FQNs.
+
+### `get_attr(obj, attr, default=None)`
+
+Recursively get an attribute using dot notation.
+
+### `store_raw_name(obj, field_name, original)`
+
+Store the FQN or `None` after an import attempt.
+
+---
+
+## `django_stratagem.app_settings`
+
+```python
+PROJECT_STRATAGEM = getattr(settings, "DJANGO_STRATAGEM", {})
+PROJECT_SKIP_DURING_MIGRATIONS: bool  # Default: True
+PROJECT_CACHE_TIMEOUT: int            # Default: 300 (5 minutes)
+```
+
+---
+
+## `django_stratagem.lookups`
+
+Custom lookups registered for `RegistryField`, `RegistryClassField`, `MultipleRegistryClassField`, and `MultipleRegistryField`:
+
+- `RegistryFieldExact` - `exact` lookup with FQN conversion.
+- `RegistryFieldIExact` - `iexact` lookup.
+- `RegistryFieldContains` - `contains` lookup.
+- `RegistryFieldIContains` - `icontains` lookup.
+- `RegistryFieldIn` - `in` lookup that converts classes/instances to FQN strings.
+
+---
+
+## `django_stratagem.checks`
+
+### `check_registries(app_configs, **kwargs)`
+
+System check function registered under tag `django_stratagem`.
+
+| ID | Level | Condition |
+|---|---|---|
+| `E001` | Error | Registry has empty/invalid `implementations_module` |
+| `E002` | Error | Model field `registry` is not a Registry subclass |
+| `W001` | Warning | Hierarchical registry parent not in global registry |
+| `W002` | Warning | Field registry not in global registry |
+

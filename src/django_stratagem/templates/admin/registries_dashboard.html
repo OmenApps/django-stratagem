@@ -1,0 +1,73 @@
+{% extends "admin/base_site.html" %}
+
+{% block content %}
+    <div class="app-registry-dashboard">
+        <h1>Registry Dashboard</h1>
+        <table class="admin-table table table-striped">
+            <thead>
+                <tr>
+                    <th>Registry</th>
+                    <th>Implementations</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for row in rows %}
+                    <tr>
+                        <td class="registry-name">
+                            <div>{{ row.registry }}</div>
+                            {% if row.description %}<div class="registry-description">
+                                    {{ row.description }}
+                                </div>{% endif %}
+                        </td>
+                        <td class="implementations-cell">
+                            <ul class="implementation-list">
+                                {% for impl in row.implementations %}
+                                    <li class="impl-entry {% if not impl.is_available %}impl-unavailable{% endif %}">
+                                        {% if impl.icon %}
+                                            <span class="impl-icon">{{ impl.icon|safe }}</span>
+                                        {% endif %}
+                                        <strong class="impl-slug">{{ impl.slug }}</strong>
+                                        &ndash; <span class="impl-name">{{ impl.name }}</span>
+
+                                        {% if not impl.is_available %}
+                                            <span class="impl-status" style="color: #e74c3c;" title="{{ impl.availability_reason }}">
+                                                (Unavailable)
+                                            </span>
+                                        {% else %}
+                                            <span class="impl-status" style="color: #27ae60;">
+                                                ✓
+                                            </span>
+                                        {% endif %}
+
+                                        {% if impl.description %}
+                                            <div class="impl-description">{{ impl.description }}</div>
+                                        {% endif %}
+
+                                        {% if impl.condition %}
+                                            <div class="impl-condition" style="font-size: 0.9em; color: #666;">
+                                                Condition: <code>{{ impl.condition }}</code>
+                                            </div>
+                                        {% endif %}
+                                    </li>
+                                {% endfor %}
+                            </ul>
+                        </td>
+                    </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+
+    <style>
+        .impl-unavailable {
+            opacity: 0.6;
+        }
+        .impl-status {
+            margin-left: 8px;
+            font-weight: bold;
+        }
+        .impl-condition {
+            margin-top: 4px;
+        }
+    </style>
+{% endblock %}

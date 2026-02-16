@@ -1,0 +1,249 @@
+{% extends "admin/base_site.html" %}
+
+{% block extrahead %}
+<style>
+    .registry-hierarchy {
+        margin-left: 20px;
+        border-left: 2px solid #e0e0e0;
+        padding-left: 15px;
+    }
+
+    .registry-card {
+        background: #f9f9f9;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        padding: 15px;
+        margin-bottom: 20px;
+    }
+
+    .registry-card.parent {
+        background: #f0f7ff;
+        border-color: #4a90e2;
+    }
+
+    .registry-card.child {
+        background: #fff9f0;
+        border-color: #e4a663;
+    }
+
+    .registry-header {
+        display: flex;
+        align-items: center;
+        margin-bottom: 10px;
+    }
+
+    .registry-name {
+        font-size: 18px;
+        font-weight: bold;
+        margin-right: 10px;
+    }
+
+    .registry-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 3px;
+        font-size: 11px;
+        font-weight: normal;
+        margin-left: 5px;
+    }
+
+    .badge-hierarchical {
+        background: #e3f2fd;
+        color: #1976d2;
+    }
+
+    .badge-parent {
+        background: #e8f5e9;
+        color: #388e3c;
+    }
+
+    .impl-list {
+        list-style: none;
+        padding: 0;
+        margin: 10px 0;
+    }
+
+    .impl-item {
+        padding: 8px 12px;
+        margin: 4px 0;
+        background: white;
+        border: 1px solid #eee;
+        border-radius: 3px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .impl-unavailable {
+        opacity: 0.6;
+        background: #f5f5f5;
+    }
+
+    .impl-info {
+        flex: 1;
+    }
+
+    .impl-slug {
+        font-weight: bold;
+        color: #333;
+    }
+
+    .impl-name {
+        color: #666;
+        margin-left: 8px;
+    }
+
+    .impl-meta {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 12px;
+    }
+
+    .impl-status {
+        font-weight: bold;
+    }
+
+    .status-available {
+        color: #27ae60;
+    }
+
+    .status-unavailable {
+        color: #e74c3c;
+    }
+
+    .parent-requirement {
+        background: #f0f0f0;
+        padding: 2px 6px;
+        border-radius: 3px;
+        font-size: 11px;
+    }
+
+    .hierarchy-arrow {
+        color: #999;
+        margin: 0 5px;
+    }
+
+    .no-implementations {
+        color: #999;
+        font-style: italic;
+        padding: 10px;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="app-registry-dashboard">
+    <h1>Registry Dashboard</h1>
+
+    {% for row in rows %}
+        <div class="registry-card {% if row.children %}parent{% elif row.parent_registry %}child{% endif %}">
+            <div class="registry-header">
+                <span class="registry-name">{{ row.registry }}</span>
+
+                {% if row.is_hierarchical %}
+                    <span class="registry-badge badge-hierarchical">Hierarchical</span>
+                {% endif %}
+
+                {% if row.parent_registry %}
+                    <span class="hierarchy-arrow">→</span>
+                    <span class="parent-requirement">Child of {{ row.parent_registry }}</span>
+                {% endif %}
+            </div>
+
+            {% if row.description %}
+                <div class="registry-description">{{ row.description }}</div>
+            {% endif %}
+
+            {% if row.implementations %}
+                <ul class="impl-list">
+                    {% for impl in row.implementations %}
+                        <li class="impl-item {% if not impl.is_available %}impl-unavailable{% endif %}">
+                            <div class="impl-info">
+                                {% if impl.icon %}
+                                    <span class="impl-icon">{{ impl.icon|safe }}</span>
+                                {% endif %}
+
+                                <span class="impl-slug">{{ impl.slug }}</span>
+                                <span class="impl-name">{{ impl.name }}</span>
+
+                                {% if impl.description %}
+                                    <div class="impl-description">{{ impl.description }}</div>
+                                {% endif %}
+                            </div>
+
+                            <div class="impl-meta">
+                                {% if impl.parent_requirements %}
+                                    <div class="parent-requirements">
+                                        Requires:
+                                        {% for parent in impl.parent_requirements %}
+                                            <span class="parent-requirement">{{ parent }}</span>
+                                        {% endfor %}
+                                    </div>
+                                {% endif %}
+
+                                {% if impl.is_available %}
+                                    <span class="impl-status status-available">✓ Available</span>
+                                {% else %}
+                                    <span class="impl-status status-unavailable"
+                                          title="{{ impl.availability_reason }}">
+                                        ✗ Unavailable
+                                    </span>
+                                {% endif %}
+                            </div>
+                        </li>
+                    {% endfor %}
+                </ul>
+            {% else %}
+                <p class="no-implementations">No implementations registered</p>
+            {% endif %}
+
+            {% if row.children %}
+                <div class="registry-hierarchy">
+                    <h4>Child Registries:</h4>
+                    {% for child in row.children %}
+                        <div class="registry-card child">
+                            <div class="registry-header">
+                                <span class="registry-name">{{ child.registry }}</span>
+                                <span class="registry-badge badge-hierarchical">Child Registry</span>
+                            </div>
+
+                            {% if child.implementations %}
+                                <ul class="impl-list">
+                                    {% for impl in child.implementations %}
+                                        <li class="impl-item {% if not impl.is_available %}impl-unavailable{% endif %}">
+                                            <div class="impl-info">
+                                                <span class="impl-slug">{{ impl.slug }}</span>
+                                                <span class="impl-name">{{ impl.name }}</span>
+                                            </div>
+
+                                            <div class="impl-meta">
+                                                {% if impl.parent_requirements %}
+                                                    <div class="parent-requirements">
+                                                        Parent:
+                                                        {% for parent in impl.parent_requirements %}
+                                                            <span class="parent-requirement">{{ parent }}</span>
+                                                        {% endfor %}
+                                                    </div>
+                                                {% endif %}
+
+                                                {% if impl.is_available %}
+                                                    <span class="impl-status status-available">✓</span>
+                                                {% else %}
+                                                    <span class="impl-status status-unavailable">✗</span>
+                                                {% endif %}
+                                            </div>
+                                        </li>
+                                    {% endfor %}
+                                </ul>
+                            {% else %}
+                                <p class="no-implementations">No implementations registered</p>
+                            {% endif %}
+                        </div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        </div>
+    {% endfor %}
+</div>
+{% endblock %}

@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+{% load stratagem %}
+
+{% block title %}Dashboard{% endblock %}
+
+{% block content %}
+{% if role == "employee" %}
+<h1>Firm Dashboard - {{ firm.name }}</h1>
+<p>Region: {{ firm.get_region_display }} | Plan: {{ firm.get_plan_display }}</p>
+
+<h2>Compliance Standards</h2>
+<p class="callout">Developer: This section uses the <code>{% templatetag openblock %} get_implementations {% templatetag closeblock %}</code> template tag to list all registered compliance implementations. No context is passed, so every implementation is shown regardless of conditions.</p>
+{% get_implementations compliance_registry as standards %}
+{% for slug, impl in standards.items %}
+    <div class="card">
+        {% if impl|registry_icon %}
+            <span class="icon">{{ impl|registry_icon }}</span>
+        {% endif %}
+        <h3>{{ impl|display_name }}</h3>
+        <p>{{ impl|registry_description }}</p>
+    </div>
+{% endfor %}
+
+<h2>Onboarding Workflows</h2>
+<p class="callout">Developer: This section passes <code>request_context</code> (containing user, firm, and request) to <code>{% templatetag openblock %} get_implementations {% templatetag closeblock %}</code>. The <code>PlanCondition</code> on each workflow filters visibility by the firm's subscription plan. The selected badge reads from <code>employee.onboarding_preference</code>.</p>
+{% get_implementations onboarding_registry request_context as workflows %}
+{% for slug, impl in workflows.items %}
+    <div class="card{% if slug == selected_onboarding_slug %} selected{% endif %}">
+        <h3>{{ impl|display_name }}</h3>
+        <p>{{ impl|registry_description }}</p>
+        {% if slug == selected_onboarding_slug %}
+            <span class="badge selected">Selected</span>
+        {% elif impl|is_available:request_context %}
+            <span class="badge available">Available for your plan</span>
+        {% else %}
+            <span class="badge locked">Upgrade to unlock</span>
+        {% endif %}
+    </div>
+{% endfor %}
+
+<h2>Inspection Schedules</h2>
+<p class="callout">Developer: This section demonstrates <code>ConditionalInterface</code> with various condition types - <code>TimeWindowCondition</code>, <code>DateRangeCondition</code>, <code>FeatureFlagCondition</code>, <code>GroupCondition</code>, and composed conditions. Each schedule's <code>condition.explain()</code> and <code>condition.check_with_details(context)</code> are called in the view to show both the static rule and the live evaluation result.</p>
+{% for schedule in inspection_schedules %}
+    <div class="card">
+        <h3>{{ schedule.name }}</h3>
+        {% if schedule.available %}
+            <span class="badge available">Available now</span>
+        {% else %}
+            <span class="badge locked">Unavailable</span>
+        {% endif %}
+        <p class="condition-detail">Condition: {{ schedule.explanation }}</p>
+        <p class="condition-detail">Status: {{ schedule.detail }}</p>
+    </div>
+{% endfor %}
+
+<h2>Billing</h2>
+<p class="callout">Developer: This section demonstrates <code>HierarchicalRegistry</code> - billing models are the parent registry and invoicing strategies are the child registry. The view calls <code>InvoicingStrategyRegistry.get_children_for_parent()</code> to show only the invoicing strategies valid for the selected billing model.</p>
+{% get_implementations billing_model_registry as billing_models %}
+{% for slug, impl in billing_models.items %}
+    <div class="card{% if slug == selected_billing_slug %} selected{% endif %}">
+        <h3>{{ impl|display_name }}</h3>
+        <p>{{ impl|registry_description }}</p>
+        {% if slug == selected_billing_slug %}
+            <span class="badge selected">Selected</span>
+            <h4>Invoicing Strategies</h4>
+            {% for child_slug, child_impl in invoicing_children.items %}
+                <div class="card{% if child_slug == selected_invoicing_slug %} selected{% endif %}">
+                    <h3>{{ child_impl|display_name }}</h3>
+                    <p>{{ child_impl|registry_description }}</p>
+                    {% if child_slug == selected_invoicing_slug %}
+                        <span class="badge selected">Selected</span>
+                    {% else %}
+                        <span class="badge available">Available</span>
+                    {% endif %}
+                </div>
+            {% endfor %}
+        {% endif %}
+    </div>
+{% endfor %}
+
+{% elif role == "subcontractor" %}
+<h1>Subcontractor Dashboard - {{ subcontractor.name }}</h1>
+<p>Trade: {{ subcontractor.trade }} | Firm: {{ firm.name }}</p>
+
+<h2>Firm Compliance Standard</h2>
+<p class="callout">Developer: The firm's <code>compliance_strategy</code> is a <code>RegistryClassField</code> - accessing it returns the class directly. The <code>compliance_handler</code> is an <code>RegistryField</code> with a factory that injects the firm's region on access.</p>
+<div class="card">
+    <h3>{{ firm.compliance_strategy.description }}</h3>
+    <p>Requirements:</p>
+    <ul>
+        {% for req in firm.compliance_strategy.get_requirements %}
+            <li>{{ req }}</li>
+        {% endfor %}
+    </ul>
+</div>
+
+<h2>Inspection Schedules</h2>
+<p class="callout">Developer: Subcontractors see the same inspection schedules evaluated against their own context. Conditions like <code>TimeWindowCondition</code> and <code>DateRangeCondition</code> are time-dependent - reload the page at different times to see availability change.</p>
+{% for schedule in inspection_schedules %}
+    <div class="card">
+        <h3>{{ schedule.name }}</h3>
+        {% if schedule.available %}
+            <span class="badge available">Available now</span>
+        {% else %}
+            <span class="badge locked">Unavailable</span>
+        {% endif %}
+        <p class="condition-detail">Condition: {{ schedule.explanation }}</p>
+        <p class="condition-detail">Status: {{ schedule.detail }}</p>
+    </div>
+{% endfor %}
+
+{% if billing_config %}
+<h2>Firm Billing</h2>
+<p class="callout">Developer: Subcontractors see their firm's billing configuration as read-only. The <code>HierarchicalRegistryField</code> ensures the invoicing strategy is always valid for the selected billing model.</p>
+<div class="card">
+    <h3>{{ billing_config.billing_model.description }}</h3>
+    <p>Invoicing: {{ billing_config.invoicing_strategy.description }}</p>
+</div>
+{% endif %}
+
+{% else %}
+<h1>Dashboard</h1>
+<p>No firm or subcontractor profile is linked to your account.</p>
+{% endif %}
+{% endblock %}

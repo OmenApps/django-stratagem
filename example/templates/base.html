@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Construction Management Platform{% endblock %}</title>
+    <style>
+        body { font-family: sans-serif; margin: 0; line-height: 1.6; }
+        nav { background: #333; color: #fff; padding: 0.75rem 2rem; display: flex; justify-content: space-between; align-items: center; }
+        nav a { color: #fff; text-decoration: none; margin-left: 1rem; }
+        nav a:hover { text-decoration: underline; }
+        nav .nav-brand { font-weight: bold; font-size: 1.1rem; }
+        nav .nav-user { font-size: 0.9rem; display: flex; align-items: center; }
+        .logout-form { display: inline; margin: 0; padding: 0; }
+        .logout-form button { background: none; border: none; color: #fff; cursor: pointer; font: inherit; padding: 0; margin-left: 0.25rem; text-decoration: none; }
+        .logout-form button:hover { text-decoration: underline; }
+        main { padding: 2rem; }
+        .card { border: 1px solid #ddd; border-radius: 4px; padding: 1rem; margin: 0.5rem 0; }
+        .badge { display: inline-block; padding: 0.2rem 0.5rem; border-radius: 3px; font-size: 0.85rem; }
+        .badge.available { background: #d4edda; color: #155724; }
+        .badge.selected { background: #cce5ff; color: #004085; }
+        .badge.locked { background: #f8d7da; color: #721c24; }
+        .card.selected { border-color: #004085; background: #f0f7ff; }
+        h1, h2, h3 { color: #333; }
+        .login-container { max-width: 500px; margin: 2rem auto; }
+        .login-container form { margin-bottom: 2rem; }
+        .form-group { margin-bottom: 1rem; }
+        .form-group label { display: block; margin-bottom: 0.25rem; font-weight: bold; }
+        .form-group input { width: 100%; padding: 0.5rem; box-sizing: border-box; }
+        .login-container button { padding: 0.5rem 1.5rem; background: #333; color: #fff; border: none; cursor: pointer; }
+        .login-container button:hover { background: #555; }
+        .login-container .error { color: #721c24; background: #f8d7da; padding: 0.5rem; border-radius: 3px; }
+        .demo-accounts table { border-collapse: collapse; width: 100%; }
+        .demo-accounts th, .demo-accounts td { border: 1px solid #ddd; padding: 0.5rem; text-align: left; }
+        .demo-accounts th { background: #f5f5f5; }
+        .callout { border-left: 4px solid #999; background: #f9f9f9; padding: 0.75rem 1rem; margin: 0.75rem 0; color: #555; font-size: 0.9rem; }
+        .condition-detail { font-size: 0.82rem; color: #666; font-family: monospace; }
+    </style>
+</head>
+<body>
+    <nav>
+        <span class="nav-brand">Construction Management Platform</span>
+        <span class="nav-user">
+            {% if user.is_authenticated %}
+                {% if user.is_superuser %}
+                    <a href="{% url 'admin:index' %}">Admin</a>
+                {% else %}
+                    <a href="{% url 'dashboard' %}">Dashboard</a>
+                {% endif %}
+                {% if user.employee %}
+                    <a href="{% url 'onboarding-settings' %}">Onboarding Settings</a>
+                {% endif %}
+                &nbsp;&nbsp;<i>{{ user.username }}</i>&nbsp;-
+                <form method="post" action="{% url 'logout' %}" class="logout-form">
+                    {% csrf_token %}
+                    <button type="submit">Log Out</button>
+                </form>
+            {% else %}
+                <a href="{% url 'login' %}">Log In</a>
+            {% endif %}
+        </span>
+    </nav>
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

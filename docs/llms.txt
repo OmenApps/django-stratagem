@@ -1,0 +1,31 @@
+# django-stratagem
+
+> Registry-based plugin architecture for Django. Define registries of
+> implementations that are auto-discovered at startup, stored in model fields,
+> and exposed through forms, admin, DRF, and template tags. Supports
+> conditional availability, hierarchical registries, and third-party plugins.
+
+## Docs
+
+- [Getting Started](https://django-stratagem.readthedocs.io/en/latest/quickstart.html): Installation, core concepts, first registry, model fields, forms, admin, DRF, configuration
+- [Building a Complete Feature](https://django-stratagem.readthedocs.io/en/latest/tutorial.html): Conditional availability, hierarchical sub-registries, plugins, signals
+- [Construction Platform Example](https://django-stratagem.readthedocs.io/en/latest/tutorial-construction.html): Real-world multi-tenant example app
+
+## How-To Guides
+
+- [Model Fields](https://django-stratagem.readthedocs.io/en/latest/howto-fields.html): All field types, parameters, lookups, factory patterns, validators
+- [Forms, Widgets, and Admin](https://django-stratagem.readthedocs.io/en/latest/howto-forms-admin.html): Form fields, context-aware filtering, admin mixins, dashboard views
+- [Template Tags](https://django-stratagem.readthedocs.io/en/latest/howto-templates.html): Template tags and filters
+- [Conditional Availability](https://django-stratagem.readthedocs.io/en/latest/howto-conditions.html): Built-in conditions, composition with & | ~, custom conditions
+- [Hierarchical Registries](https://django-stratagem.readthedocs.io/en/latest/howto-hierarchies.html): Parent-child registry relationships
+- [DRF Integration](https://django-stratagem.readthedocs.io/en/latest/howto-drf.html): Serializer fields and API views
+- [Plugin System](https://django-stratagem.readthedocs.io/en/latest/howto-plugins.html): Entry points for third-party packages
+
+## Understand
+
+- [Architecture and Design](https://django-stratagem.readthedocs.io/en/latest/explanation.html): Auto-discovery, migration safety, design rationale
+- [Extension Hooks](https://django-stratagem.readthedocs.io/en/latest/hooks.html): Customization points for overriding registry behavior
+
+## API Reference
+
+- [Full API Reference](https://django-stratagem.readthedocs.io/en/latest/api.html): All modules, classes, methods, and parameters

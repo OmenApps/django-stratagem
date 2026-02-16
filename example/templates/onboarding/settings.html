@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+
+{% block title %}Onboarding Settings{% endblock %}
+
+{% block content %}
+<h1>Onboarding Preferences</h1>
+<p class="callout">Developer: This form uses <code>ContextAwareRegistryFormField</code> with <code>RegistryWidget</code>. The dropdown is filtered by the firm's plan via <code>PlanCondition</code> - a {{ firm.get_plan_display }} plan firm{% if firm %} ({{ firm.name }}){% endif %} only sees workflows matching its tier. The <code>RegistryContextMixin</code> passes the context dict into the form field automatically.</p>
+<form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button type="submit">Save</button>
+</form>
+{% endblock %}
