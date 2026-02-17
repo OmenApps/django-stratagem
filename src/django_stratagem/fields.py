@@ -533,9 +533,10 @@ class AbstractRegistryField(Field):
 
         super().__init__(*args, **kwargs)
 
-        # Add validators
-        self._validators.append(ClassnameValidator(None))  # type: ignore[union-attr]
-        if self.registry:
+        # Add validators if not already present (prevent duplication when reconstructed from deconstruct or cloned)
+        if not any(isinstance(v, ClassnameValidator) for v in self._validators):  # type: ignore[union-attr]
+            self._validators.append(ClassnameValidator(None))  # type: ignore[union-attr]
+        if self.registry and not any(isinstance(v, RegistryValidator) for v in self._validators):  # type: ignore[union-attr]
             self._validators.append(RegistryValidator(self.registry))  # type: ignore[union-attr]
 
         if not is_running_migrations():
@@ -614,6 +615,16 @@ class AbstractRegistryField(Field):
         # Remove choices as they're dynamically generated
         if "choices" in kwargs:
             del kwargs["choices"]
+
+        # Strip auto-added validators to prevent duplication in deconstruct/reconstruct (clone, makemigrations, etc.)
+        if "validators" in kwargs:
+            kwargs["validators"] = [
+                v
+                for v in kwargs["validators"]
+                if not isinstance(v, (ClassnameValidator, RegistryValidator))
+            ]
+            if not kwargs["validators"]:
+                del kwargs["validators"]
 
         return name, path, args, kwargs  # type: ignore[return-value]
 

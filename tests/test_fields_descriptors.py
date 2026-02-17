@@ -6,6 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from django.core.exceptions import ValidationError
+from django.core.validators import MaxLengthValidator
 
 from django_stratagem.fields import (
     HierarchicalRegistryField,
@@ -21,6 +22,7 @@ from django_stratagem.fields import (
     RegistryFieldDescriptor,
 )
 from django_stratagem.utils import get_fully_qualified_name
+from django_stratagem.validators import ClassnameValidator, RegistryValidator
 
 pytestmark = pytest.mark.django_db
 
@@ -970,7 +972,7 @@ class TestHierarchicalRegistryFieldValidation:
 
         obj.parent_field = UnregisteredParent
 
-        # Parent slug won't be found → hierarchical check skipped, no error
+        # Parent slug won't be found >> hierarchical check skipped, no error
         field.validate(ChildOfA, obj)
 
     def test_init_warns_for_non_hierarchical_registry(self, test_strategy_registry):
@@ -1069,7 +1071,7 @@ class TestMultipleHierarchicalRegistryFieldValidation:
         obj = _make_mock_obj()
         obj.parent_field = None
 
-        # No parent value → early return, no validation error
+        # No parent value >> early return, no validation error
         field.validate([ChildOfA], obj)
 
     def test_get_parent_value_attribute_error(self, child_registry):
@@ -1222,6 +1224,71 @@ class TestMultipleRegistryClassFieldDescriptorGetPrepValue:
         )
         result = descriptor.get_prep_value(12345)
         assert result is None
+
+
+class TestDeconstructReconstructCycle:
+    """Regression tests for prevention of duplicate validators during deconstruct/reconstruct."""
+
+    def test_deconstruct_does_not_contain_auto_validators(self, test_strategy_registry):
+        """deconstruct() output should not include ClassnameValidator or RegistryValidator."""
+
+        field = RegistryClassField(registry=test_strategy_registry, blank=True, null=True)
+        field.name = "test_field"
+        _, _, _, kwargs = field.deconstruct()
+        assert "validators" not in kwargs
+
+    def test_deconstruct_preserves_custom_validators(self, test_strategy_registry):
+        """deconstruct() should preserve user-supplied validators while stripping auto-added ones."""
+
+        custom_validator = MaxLengthValidator(100)
+        field = RegistryClassField(
+            registry=test_strategy_registry, blank=True, null=True, validators=[custom_validator]
+        )
+        field.name = "test_field"
+        _, _, _, kwargs = field.deconstruct()
+        assert "validators" in kwargs
+        assert len(kwargs["validators"]) == 1
+        assert isinstance(kwargs["validators"][0], MaxLengthValidator)
+
+    def test_reconstruct_cycle_preserves_validator_count(self, test_strategy_registry):
+        """A deconstruct >> reconstruct cycle should not add extra validators."""
+
+        field = RegistryClassField(registry=test_strategy_registry, blank=True, null=True)
+        field.name = "test_field"
+        original_count = len(field._validators)
+
+        # Simulate deconstruct >> reconstruct (like makemigrations would do)
+        _, path, args, kwargs = field.deconstruct()
+        reconstructed = RegistryClassField(*args, **kwargs)
+        reconstructed.name = "test_field"
+
+        assert len(reconstructed._validators) == original_count
+
+        # Do it again to confirm we're good after multiple cycles
+        _, path2, args2, kwargs2 = reconstructed.deconstruct()
+        reconstructed2 = RegistryClassField(*args2, **kwargs2)
+        reconstructed2.name = "test_field"
+
+        assert len(reconstructed2._validators) == original_count
+
+    def test_validators_present_at_runtime(self, test_strategy_registry):
+        """After construction, ClassnameValidator and RegistryValidator are present."""
+
+        field = RegistryClassField(registry=test_strategy_registry, blank=True, null=True)
+        # Use type() for exact match since RegistryValidator is a subclass of ClassnameValidator
+        classname_validators = [v for v in field._validators if type(v) is ClassnameValidator]
+        registry_validators = [v for v in field._validators if isinstance(v, RegistryValidator)]
+        assert len(classname_validators) == 1
+        assert len(registry_validators) == 1
+
+    def test_field_without_registry_has_classname_validator_only(self):
+        """A field with no registry should have ClassnameValidator but not RegistryValidator."""
+
+        field = RegistryClassField(blank=True, null=True)
+        classname_validators = [v for v in field._validators if type(v) is ClassnameValidator]
+        registry_validators = [v for v in field._validators if isinstance(v, RegistryValidator)]
+        assert len(classname_validators) == 1
+        assert len(registry_validators) == 0
 
 
 class TestContributeToClass:
