@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "django-stratagem"
-version = "2026.2.1b1"
+version = "2026.2.1b2"
 description = "Registry-based plugin architecture for Django applications"
 readme = "README.md"
 license = "MIT"
