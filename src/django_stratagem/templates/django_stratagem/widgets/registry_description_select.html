@@ -1,0 +1,8 @@
+{% include "django/forms/widgets/select.html" %}
+<div id="{{ widget.attrs.id }}-registry-description"
+     class="registry-description-container{% if widget.description_attrs.class %} {{ widget.description_attrs.class }}{% endif %}"
+     data-registry-description-for="{{ widget.attrs.id }}"
+     {% if widget.description_attrs.style %}style="{{ widget.description_attrs.style }}"{% else %}style="margin-top: 0.25rem;"{% endif %}
+     aria-live="polite"
+     aria-atomic="true">
+</div>

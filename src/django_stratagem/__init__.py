@@ -53,7 +53,7 @@ from django_stratagem.registry import (
 )
 from django_stratagem.utils import get_class, get_fully_qualified_name, import_by_name
 from django_stratagem.validators import ClassnameValidator, RegistryValidator
-from django_stratagem.widgets import HierarchicalRegistryWidget, RegistryWidget
+from django_stratagem.widgets import HierarchicalRegistryWidget, RegistryDescriptionWidget, RegistryWidget
 
 __all__ = [
     # Registry classes
@@ -78,6 +78,7 @@ __all__ = [
     "ContextAwareRegistryFormField",
     "HierarchicalRegistryFormField",
     "HierarchicalRegistryWidget",
+    "RegistryDescriptionWidget",
     "RegistryWidget",
     "HierarchicalFormMixin",
     "RegistryContextMixin",

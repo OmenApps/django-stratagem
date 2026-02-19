@@ -712,6 +712,9 @@ class AbstractRegistryField(Field):
 
     def formfield(self, form_class: Any = None, choices_form_class: Any = None, **kwargs: Any) -> forms.Field | None:
         from .forms import RegistryFormField, RegistryMultipleChoiceFormField
+        from .widgets import RegistryDescriptionWidget
+
+        show_description = kwargs.pop("show_description", False)
 
         defaults = {
             "required": not self.blank,
@@ -732,6 +735,12 @@ class AbstractRegistryField(Field):
 
         if self.null:
             defaults["empty_value"] = None
+
+        if show_description and "widget" not in kwargs:
+            kwargs["widget"] = RegistryDescriptionWidget(
+                registry=self.registry,
+                choices=defaults.get("choices", []),
+            )
 
         form_class = form_class or self.form_class
         if form_class is None:

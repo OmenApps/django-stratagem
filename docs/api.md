@@ -325,7 +325,7 @@ Base class for all registry model fields. Internal type: `CharField`.
 
 - `__init__(*args, import_error=None, max_length=200, registry=None, **kwargs)`
 - `contribute_to_class(cls, name, private_only=False)` - Sets up the descriptor.
-- `formfield(...)` - Returns `RegistryFormField` or `RegistryMultipleChoiceFormField`.
+- `formfield(...)` - Returns `RegistryFormField` or `RegistryMultipleChoiceFormField`. Pass `show_description=True` to use `RegistryDescriptionWidget` automatically.
 - `choices` - Property that returns `registry.get_choices()`.
 
 ### `RegistryClassField`
@@ -457,7 +457,20 @@ class RegistryWidget(forms.Select)
 ```
 
 - `__init__(attrs=None, choices=(), registry=None)`
-- Adds `title`, `data-icon`, `data-priority` attributes to options.
+- Adds `title`, `data-description`, `data-icon`, `data-priority` attributes to options.
+
+### `RegistryDescriptionWidget`
+
+```python
+class RegistryDescriptionWidget(RegistryWidget)
+```
+
+- `__init__(attrs=None, choices=(), registry=None, description_attrs=None)`
+- Renders the select element plus a `<div>` container that displays the selected option's description.
+- `description_attrs` - dict of HTML attributes applied to the container (e.g. `{"class": "alert alert-info"}`).
+- Includes `Media.js` referencing `django_stratagem/js/registry_description.js`.
+- The container carries `aria-live="polite"` for screen readers.
+- Works with HTMX - reinitialises after `htmx:afterSettle`.
 
 ### `HierarchicalRegistryWidget`
 

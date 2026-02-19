@@ -51,6 +51,12 @@ Issues = "https://github.com/OmenApps/django-stratagem/issues"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+django_stratagem = [
+    "templates/**/*.html",
+    "static/**/*.js",
+]
+
 [tool.ruff]
 src = ["src"]
 target-version = "py311"

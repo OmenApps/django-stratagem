@@ -92,7 +92,7 @@ class MyForm(HierarchicalFormMixin, forms.ModelForm):
 
 ### RegistryWidget
 
-Enhanced `Select` widget that adds `title` (description), `data-icon`, and `data-priority` attributes to each option.
+Enhanced `Select` widget that adds `title` (description), `data-description`, `data-icon`, and `data-priority` attributes to each `<option>` element.
 
 ```python
 from django_stratagem import RegistryWidget
@@ -103,6 +103,66 @@ class MyForm(forms.Form):
         widget=RegistryWidget(registry=NotificationRegistry),
     )
 ```
+
+### RegistryDescriptionWidget
+
+Extends `RegistryWidget` to render a companion `<div>` below the `<select>` that shows the description of whichever option is currently selected. The description updates on change via a small bundled JS file - no AJAX calls, no extra views or URL patterns needed.
+
+Each `<option>` already carries a `data-description` attribute (set by `RegistryWidget.create_option`). The JS reads that attribute and writes its text into the container. When no description is available the container is hidden entirely.
+
+```python
+from django_stratagem import RegistryDescriptionWidget
+
+class MyForm(forms.Form):
+    strategy = RegistryFormField(
+        registry=NotificationRegistry,
+        widget=RegistryDescriptionWidget(registry=NotificationRegistry),
+    )
+```
+
+Pass `description_attrs` to control the container's HTML attributes:
+
+```python
+RegistryDescriptionWidget(
+    registry=NotificationRegistry,
+    description_attrs={"class": "alert alert-info", "style": "font-size: 0.9rem;"},
+)
+```
+
+The container element looks like this in the rendered HTML:
+
+```html
+<div id="id_strategy-registry-description"
+     class="registry-description-container alert alert-info"
+     data-registry-description-for="id_strategy"
+     style="font-size: 0.9rem;"
+     aria-live="polite"
+     aria-atomic="true">
+  Selected option's description text here.
+</div>
+```
+
+If the form is loaded inside an HTMX swap, the JS reinitialises automatically on `htmx:afterSettle`.
+
+#### Using `show_description` on model fields
+
+For model forms you can skip the manual widget assignment. Pass `show_description=True` when overriding `formfield()` and the field will pick `RegistryDescriptionWidget` on its own:
+
+```python
+class MyModelForm(forms.ModelForm):
+    class Meta:
+        model = MyModel
+        fields = ["strategy"]
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Override the field to get the description widget
+        self.fields["strategy"] = MyModel._meta.get_field("strategy").formfield(
+            show_description=True,
+        )
+```
+
+If you pass an explicit `widget` kwarg alongside `show_description=True`, the explicit widget wins.
 
 ### HierarchicalRegistryWidget
 

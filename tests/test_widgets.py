@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 from django.forms import Select
 
-from django_stratagem.widgets import HierarchicalRegistryWidget, RegistryWidget
+from django_stratagem.widgets import HierarchicalRegistryWidget, RegistryDescriptionWidget, RegistryWidget
 
 
 class TestRegistryWidget:
@@ -35,6 +35,15 @@ class TestRegistryWidget:
         option = widget.create_option("field", "email", "Email Strategy", False, 0)
         assert option["attrs"]["title"] == "Send notifications via email"
 
+    def test_create_option_adds_data_description(self, test_registry):
+        """Test create_option sets data-description attr from meta description."""
+        widget = RegistryWidget(
+            choices=[("email", "Email Strategy")],
+            registry=test_registry,
+        )
+        option = widget.create_option("field", "email", "Email Strategy", False, 0)
+        assert option["attrs"]["data-description"] == "Send notifications via email"
+
     def test_create_option_with_icon(self, test_registry):
         """Test create_option sets data-icon attr from meta icon."""
         widget = RegistryWidget(
@@ -61,6 +70,7 @@ class TestRegistryWidget:
         )
         option = widget.create_option("field", "sms", "SMS Strategy", False, 0)
         assert option["attrs"]["title"] == "Send notifications via SMS"
+        assert option["attrs"]["data-description"] == "Send notifications via SMS"
         assert option["attrs"]["data-icon"] == "fa-solid fa-message"
         assert option["attrs"]["data-priority"] == "20"
 
@@ -69,6 +79,7 @@ class TestRegistryWidget:
         widget = RegistryWidget(choices=[("email", "Email")])
         option = widget.create_option("field", "email", "Email", False, 0)
         assert "title" not in option["attrs"]
+        assert "data-description" not in option["attrs"]
         assert "data-icon" not in option["attrs"]
         assert "data-priority" not in option["attrs"]
 
@@ -80,6 +91,7 @@ class TestRegistryWidget:
         )
         option = widget.create_option("field", "", "---", False, 0)
         assert "title" not in option["attrs"]
+        assert "data-description" not in option["attrs"]
         assert "data-icon" not in option["attrs"]
 
     def test_create_option_value_not_in_registry(self, test_registry):
@@ -90,6 +102,7 @@ class TestRegistryWidget:
         )
         option = widget.create_option("field", "nonexistent", "Missing", False, 0)
         assert "title" not in option["attrs"]
+        assert "data-description" not in option["attrs"]
         assert "data-icon" not in option["attrs"]
 
     def test_create_option_meta_partial_fields(self, test_registry):
@@ -109,6 +122,7 @@ class TestRegistryWidget:
         )
         option = widget.create_option("field", "minimal", "Minimal", False, 0)
         assert option["attrs"]["title"] == "Has description only"
+        assert option["attrs"]["data-description"] == "Has description only"
         assert "data-icon" not in option["attrs"]
         assert "data-priority" not in option["attrs"]
 
@@ -121,6 +135,157 @@ class TestRegistryWidget:
         html = widget.render("notification_type", "email")
         assert 'title="Send notifications via email"' in html
         assert "data-icon" in html
+        assert "data-description" in html
+
+
+class TestRegistryDescriptionWidget:
+    """Tests for RegistryDescriptionWidget."""
+
+    def test_inherits_from_registry_widget(self):
+        """Test widget inherits from RegistryWidget."""
+        widget = RegistryDescriptionWidget()
+        assert isinstance(widget, RegistryWidget)
+        assert isinstance(widget, Select)
+
+    def test_template_name_set(self):
+        """Test the custom template_name is set."""
+        widget = RegistryDescriptionWidget()
+        assert widget.template_name == "django_stratagem/widgets/registry_description_select.html"
+
+    def test_media_includes_js(self):
+        """Test the widget's Media class includes the JS file."""
+        widget = RegistryDescriptionWidget()
+        assert "django_stratagem/js/registry_description.js" in widget.media._js
+
+    def test_init_default_description_attrs(self):
+        """Test __init__ defaults description_attrs to empty dict."""
+        widget = RegistryDescriptionWidget()
+        assert widget.description_attrs == {}
+
+    def test_init_custom_description_attrs(self):
+        """Test __init__ stores custom description_attrs."""
+        attrs = {"class": "card bg-light", "style": "padding: 1rem;"}
+        widget = RegistryDescriptionWidget(description_attrs=attrs)
+        assert widget.description_attrs == attrs
+
+    def test_init_stores_registry(self, test_registry):
+        """Test __init__ stores the registry attribute."""
+        widget = RegistryDescriptionWidget(registry=test_registry)
+        assert widget.registry is test_registry
+
+    def test_get_context_includes_description_attrs(self, test_registry):
+        """Test get_context adds description_attrs to widget context."""
+        desc_attrs = {"class": "my-class", "style": "color: red;"}
+        widget = RegistryDescriptionWidget(
+            choices=[("email", "Email")],
+            registry=test_registry,
+            description_attrs=desc_attrs,
+        )
+        context = widget.get_context("test_field", "email", {"id": "id_test_field"})
+        assert context["widget"]["description_attrs"] == desc_attrs
+
+    def test_render_includes_select_and_description_container(self, test_registry):
+        """Test render produces both the select and the description container div."""
+        widget = RegistryDescriptionWidget(
+            choices=[("email", "Email Strategy")],
+            registry=test_registry,
+        )
+        html = widget.render("backend", "email", attrs={"id": "id_backend"})
+        # Should contain a <select> element
+        assert "<select" in html
+        # Should contain the description container
+        assert 'data-registry-description-for="id_backend"' in html
+        assert "registry-description-container" in html
+
+    def test_render_description_container_has_correct_id(self, test_registry):
+        """Test the description container's id is based on the select's id."""
+        widget = RegistryDescriptionWidget(
+            choices=[("email", "Email Strategy")],
+            registry=test_registry,
+        )
+        html = widget.render("backend", "email", attrs={"id": "id_backend"})
+        assert 'id="id_backend-registry-description"' in html
+
+    def test_render_options_have_data_description(self, test_registry):
+        """Test rendered options have data-description attributes."""
+        widget = RegistryDescriptionWidget(
+            choices=[("email", "Email Strategy"), ("sms", "SMS Strategy")],
+            registry=test_registry,
+        )
+        html = widget.render("backend", "email", attrs={"id": "id_backend"})
+        assert 'data-description="Send notifications via email"' in html
+        assert 'data-description="Send notifications via SMS"' in html
+
+    def test_render_blank_option_no_data_description(self, test_registry):
+        """Test blank option does not get a data-description attribute."""
+        widget = RegistryDescriptionWidget(
+            choices=[("", "---"), ("email", "Email Strategy")],
+            registry=test_registry,
+        )
+        html = widget.render("backend", "", attrs={"id": "id_backend"})
+        # The blank option should not have data-description
+        # Count occurrences: only the email option should have it
+        assert html.count("data-description=") == 1
+
+    def test_render_with_custom_description_attrs(self, test_registry):
+        """Test render applies custom description_attrs to the container."""
+        widget = RegistryDescriptionWidget(
+            choices=[("email", "Email Strategy")],
+            registry=test_registry,
+            description_attrs={"class": "card bg-light mb-3", "style": "padding: 1rem;"},
+        )
+        html = widget.render("backend", "email", attrs={"id": "id_backend"})
+        assert "card bg-light mb-3" in html
+        assert "padding: 1rem;" in html
+
+    def test_render_description_container_has_aria_live(self, test_registry):
+        """Test the description container has aria-live for accessibility."""
+        widget = RegistryDescriptionWidget(
+            choices=[("email", "Email Strategy")],
+            registry=test_registry,
+        )
+        html = widget.render("backend", "email", attrs={"id": "id_backend"})
+        assert 'aria-live="polite"' in html
+        assert 'aria-atomic="true"' in html
+
+    def test_render_default_style(self, test_registry):
+        """Test the description container has default margin-top style."""
+        widget = RegistryDescriptionWidget(
+            choices=[("email", "Email Strategy")],
+            registry=test_registry,
+        )
+        html = widget.render("backend", "email", attrs={"id": "id_backend"})
+        assert "margin-top: 0.25rem;" in html
+
+
+class TestFormfieldShowDescription:
+    """Tests for the show_description parameter on formfield()."""
+
+    def test_formfield_with_show_description_uses_description_widget(self):
+        """Test formfield() with show_description=True returns RegistryDescriptionWidget."""
+        from tests.testapp.models import RegistryFieldTestModel
+
+        field = RegistryFieldTestModel._meta.get_field("single_instance")
+        form_field = field.formfield(show_description=True)
+        assert isinstance(form_field.widget, RegistryDescriptionWidget)
+
+    def test_formfield_without_show_description_uses_default(self):
+        """Test formfield() without show_description uses the default widget."""
+        from tests.testapp.models import RegistryFieldTestModel
+
+        field = RegistryFieldTestModel._meta.get_field("single_instance")
+        form_field = field.formfield()
+        assert not isinstance(form_field.widget, RegistryDescriptionWidget)
+
+    def test_formfield_show_description_does_not_override_explicit_widget(self):
+        """Test show_description is ignored when an explicit widget is passed."""
+        from tests.testapp.models import RegistryFieldTestModel
+
+        field = RegistryFieldTestModel._meta.get_field("single_instance")
+        form_field = field.formfield(show_description=True, widget=RegistryWidget)
+        # Check type, not identity, in case Django does a deepcopy of the widget
+        assert type(form_field.widget) is RegistryWidget
+        assert not isinstance(form_field.widget, RegistryDescriptionWidget)
 
 
 class TestHierarchicalRegistryWidget:

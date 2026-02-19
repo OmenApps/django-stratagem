@@ -19,12 +19,34 @@ class RegistryWidget(forms.Select):
             if meta:
                 if meta.get("description"):
                     option["attrs"]["title"] = meta["description"]
+                    option["attrs"]["data-description"] = meta["description"]
                 if meta.get("icon"):
                     option["attrs"]["data-icon"] = meta["icon"]
                 if meta.get("priority"):
                     option["attrs"]["data-priority"] = str(meta["priority"])
 
         return option
+
+
+class RegistryDescriptionWidget(RegistryWidget):
+    """Select widget that displays the selected implementation's description.
+
+    Dynamically renders a container below standard widget that shows a description of currently selected option.
+    """
+
+    template_name = "django_stratagem/widgets/registry_description_select.html"
+
+    class Media:
+        js = ("django_stratagem/js/registry_description.js",)
+
+    def __init__(self, attrs=None, choices=(), registry=None, description_attrs=None):
+        super().__init__(attrs, choices, registry=registry)
+        self.description_attrs = description_attrs or {}
+
+    def get_context(self, name, value, attrs):
+        context = super().get_context(name, value, attrs)
+        context["widget"]["description_attrs"] = self.description_attrs
+        return context
 
 
 class HierarchicalRegistryWidget(forms.Select):
