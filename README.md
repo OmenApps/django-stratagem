@@ -4,7 +4,11 @@
 
 # django-stratagem
 
-[![Latest on Django Packages](https://img.shields.io/badge/PyPI-{{ package.slug}}-tags-8c3c26.svg)](https://djangopackages.org/packages/p/django-stratagem/)
+[![PyPI](https://img.shields.io/pypi/v/django-stratagem)](https://pypi.org/project/django-stratagem/)
+[![Python versions](https://img.shields.io/pypi/pyversions/django-stratagem)](https://pypi.org/project/django-stratagem/)
+[![Django versions](https://img.shields.io/pypi/djversions/django-stratagem)](https://pypi.org/project/django-stratagem/)
+[![Documentation](https://readthedocs.org/projects/django-stratagem/badge/?version=latest)](https://django-stratagem.readthedocs.io/en/latest/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
 Many Django projects reach a point where you want to make the system **configurable** and need a some of the app's behavior to be **swappable**. For instance, if you need to support multiple payment processors and each merchant picks one. Maybe you offer several export formats and users choose CSV, XLSX, or PDF at download time. Maybe different customers get different notification channels depending on their plan.
 
@@ -26,10 +30,10 @@ The usual approach is a mess of nested `if/elif` chains, settings flags, or one-
 
 ## Example use cases
 
-- **Notification channels** - email, SMS, push, Slack, webhook - let admins pick which channels are active. ([Getting started](docs/quickstart.md))
+- **Notification channels** - email, SMS, push, Slack, webhook - let admins pick which channels are active. ([Getting started](https://django-stratagem.readthedocs.io/en/latest/quickstart.html))
 - **Payment gateways** - Stripe, PayPal, Braintree - store the chosen gateway per merchant in a model field and swap it at runtime.
-- **Export/import formats** - CSV, Excel, PDF, JSON - register each format as an option, then offer them as choices in a [form](docs/howto-forms-admin.md) or API endpoint.
-- **Authentication backends** - LDAP, SAML, OAuth providers - enable or disable per-tenant with [conditional availability](docs/howto-conditions.md) tied to feature flags or permissions.
+- **Export/import formats** - CSV, Excel, PDF, JSON - register each format as an option, then offer them as choices in a [form](https://django-stratagem.readthedocs.io/en/latest/howto-forms-admin.html) or API endpoint.
+- **Authentication backends** - LDAP, SAML, OAuth providers - enable or disable per-tenant with [conditional availability](https://django-stratagem.readthedocs.io/en/latest/howto-conditions.html) tied to feature flags or permissions.
 - **Pricing / discount strategies** - percentage off, fixed amount, buy-one-get-one - attach the active strategy to a model and let business users pick it in the admin.
 - **Report generators** - sales summary, inventory audit, user activity - each report type is a class, and adding a new report is just adding a new module.
 
