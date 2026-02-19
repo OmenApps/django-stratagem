@@ -37,4 +37,5 @@ exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
 suppress_warnings = ["myst.xref_missing"]
 
 html_theme = "furo"
+html_static_path = ["_static"]
 html_extra_path = ["llms.txt", "llms-full.txt"]

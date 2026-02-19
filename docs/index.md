@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="_static/django-stratagem.png" alt="django-stratagem logo" width="400">
+</p>
+
 # django-stratagem
 
 Many Django projects reach a point where you want to make the system **configurable** and need a some of the app's behavior to be **swappable**. For instance, if you need to support multiple payment processors and each merchant picks one. Maybe you offer several export formats and users choose CSV, XLSX, or PDF at download time. Maybe different customers get different notification channels depending on their plan.

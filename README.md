@@ -1,4 +1,10 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/OmenApps/django-stratagem/refs/heads/main/docs/_static/django-stratagem.png" alt="django-stratagem logo" width="400">
+</p>
+
 # django-stratagem
+
+[![Latest on Django Packages](https://img.shields.io/badge/PyPI-{{ package.slug}}-tags-8c3c26.svg)](https://djangopackages.org/packages/p/django-stratagem/)
 
 Many Django projects reach a point where you want to make the system **configurable** and need a some of the app's behavior to be **swappable**. For instance, if you need to support multiple payment processors and each merchant picks one. Maybe you offer several export formats and users choose CSV, XLSX, or PDF at download time. Maybe different customers get different notification channels depending on their plan.
 
