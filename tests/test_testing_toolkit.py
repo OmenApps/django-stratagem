@@ -68,3 +68,23 @@ def test_override_availability_forces_available_for_impl_with_own_method():
 
     # Original (own) method is restored.
     assert Gated.is_available({}) is False
+
+
+def test_isolate_registries_restores_global_list_and_implementations(test_strategy_registry):
+    from django_stratagem.registry import Registry, django_stratagem_registry
+    from django_stratagem.testing import isolate_registries
+
+    before_list = list(django_stratagem_registry)
+    before_impls = dict(test_strategy_registry.implementations)
+
+    with isolate_registries():
+
+        class Ephemeral(Registry):
+            implementations_module = "ephemeral_impls"
+
+        assert Ephemeral in django_stratagem_registry
+        test_strategy_registry.implementations.clear()
+        assert test_strategy_registry.implementations == {}
+
+    assert list(django_stratagem_registry) == before_list
+    assert test_strategy_registry.implementations == before_impls

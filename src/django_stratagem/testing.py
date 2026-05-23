@@ -6,6 +6,7 @@ state so tests stay isolated without hand-written setup/teardown.
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Iterator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
@@ -51,3 +52,33 @@ def override_availability(implementation: type[Any], *, available: bool = True) 
             del implementation.is_available
         else:
             implementation.is_available = original
+
+
+@contextmanager
+def isolate_registries() -> Iterator[None]:
+    """Snapshot all registry state on enter and restore it on exit.
+
+    Restores the global registry list, each registry's implementations map,
+    and the hierarchical parent/child relationships. Use this to wrap a test
+    (or a fixture) that defines or mutates registries so nothing leaks.
+    """
+    from .registry import RegistryRelationship, django_stratagem_registry
+
+    original_list = list(django_stratagem_registry)
+    original_relationships = copy.deepcopy(RegistryRelationship._relationships)
+    original_implementations = {
+        registry: dict(registry.implementations)
+        for registry in django_stratagem_registry
+        if hasattr(registry, "implementations")
+    }
+    try:
+        yield
+    finally:
+        django_stratagem_registry.clear()
+        django_stratagem_registry.extend(original_list)
+        RegistryRelationship._relationships.clear()
+        RegistryRelationship._relationships.update(original_relationships)
+        for registry, impls in original_implementations.items():
+            registry.implementations.clear()
+            registry.implementations.update(impls)
+            registry.clear_cache()
