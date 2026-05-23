@@ -30,3 +30,24 @@ def temporary_implementation(registry: type[Registry], implementation: type[Any]
         registry.implementations.clear()
         registry.implementations.update(original)
         registry.clear_cache()
+
+
+_MISSING = object()
+
+
+@contextmanager
+def override_availability(implementation: type[Any], *, available: bool = True) -> Iterator[type[Any]]:
+    """Force ``implementation.is_available`` to return ``available`` in the block.
+
+    Restores the implementation's own ``is_available`` (or removes the
+    override, falling back to the inherited method) on exit.
+    """
+    original = implementation.__dict__.get("is_available", _MISSING)
+    implementation.is_available = classmethod(lambda cls, context=None: available)
+    try:
+        yield implementation
+    finally:
+        if original is _MISSING:
+            del implementation.is_available
+        else:
+            implementation.is_available = original

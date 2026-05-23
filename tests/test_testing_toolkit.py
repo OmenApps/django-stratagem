@@ -32,3 +32,39 @@ def test_temporary_implementation_restores_on_exception(test_strategy_registry):
         pass
 
     assert "temp" not in test_strategy_registry.implementations
+
+
+def test_override_availability_forces_unavailable():
+    from django_stratagem.interfaces import ConditionalInterface
+    from django_stratagem.testing import override_availability
+
+    class Feature(ConditionalInterface):
+        slug = "feat"
+
+    # No condition means available by default.
+    assert Feature.is_available({}) is True
+
+    with override_availability(Feature, available=False):
+        assert Feature.is_available({}) is False
+
+    assert Feature.is_available({}) is True
+
+
+def test_override_availability_forces_available_for_impl_with_own_method():
+    from django_stratagem.interfaces import ConditionalInterface
+    from django_stratagem.testing import override_availability
+
+    class Gated(ConditionalInterface):
+        slug = "gated"
+
+        @classmethod
+        def is_available(cls, context=None):
+            return False
+
+    assert Gated.is_available({}) is False
+
+    with override_availability(Gated, available=True):
+        assert Gated.is_available({}) is True
+
+    # Original (own) method is restored.
+    assert Gated.is_available({}) is False
