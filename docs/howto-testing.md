@@ -46,3 +46,12 @@ def _isolate_stratagem():
     with isolate_registries():
         yield
 ```
+
+## Notes and limitations
+
+- `temporary_implementation` restores a registry's *implementations*, not
+  registry *membership*. Defining a new `Registry` subclass adds it to the
+  global list at class-creation time; use `isolate_registries` to roll that
+  back.
+- These helpers mutate process-global registry state and are not thread-safe.
+  Use them within a single test process (the usual pytest model).
