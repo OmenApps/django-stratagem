@@ -71,3 +71,17 @@ class ConditionalInterface(Interface):
             context = {}
 
         return cls.condition.is_met(context)
+
+    @classmethod
+    def explain_availability(cls, context: dict[str, Any] | None = None) -> tuple[bool, str]:
+        """Return ``(is_available, human_readable_reason)`` for the given context.
+
+        Reuses ``Condition.check_with_details`` so the reason describes which
+        sub-conditions passed or failed. Intended for the registry inspector
+        and debugging tools.
+        """
+        if not cls.condition:
+            return True, "No condition set; always available"
+        if context is None:
+            context = {}
+        return cls.condition.check_with_details(context)

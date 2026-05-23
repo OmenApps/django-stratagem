@@ -10,6 +10,32 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
+_SENSITIVE_NAME_MARKERS = (
+    "SECRET",
+    "PASSWORD",
+    "PASSWD",
+    "TOKEN",
+    "API_KEY",
+    "APIKEY",
+    "PRIVATE",
+    "CREDENTIAL",
+    "AUTH",
+)
+
+
+def _redact_if_sensitive(name: str, value: object) -> str:
+    """Return ``repr(value)`` unless ``name`` looks like a credential.
+
+    Conditions echo their configured comparison value in ``explain()`` output,
+    which is surfaced in logs and the registry inspector. When the setting or
+    environment variable name suggests a secret, the value is masked to avoid
+    leaking it to those surfaces.
+    """
+    upper = name.upper()
+    if any(marker in upper for marker in _SENSITIVE_NAME_MARKERS):
+        return "***redacted***"
+    return repr(value)
+
 
 class Condition(ABC):
     """Base class for implementation conditions."""
@@ -176,7 +202,7 @@ class SettingCondition(Condition):
         self.expected_value = expected_value
 
     def explain(self) -> str:
-        return f"Setting({self.setting_name}={self.expected_value!r})"
+        return f"Setting({self.setting_name}={_redact_if_sensitive(self.setting_name, self.expected_value)})"
 
     def is_met(self, context: dict[str, Any]) -> bool:
         actual_value = getattr(settings, self.setting_name, None)
@@ -338,7 +364,7 @@ class EnvironmentCondition(Condition):
 
     def explain(self) -> str:
         if self.expected_value is not None:
-            return f"Environment({self.env_var}={self.expected_value!r})"
+            return f"Environment({self.env_var}={_redact_if_sensitive(self.env_var, self.expected_value)})"
         return f"Environment({self.env_var})"
 
     def is_met(self, context: dict[str, Any]) -> bool:

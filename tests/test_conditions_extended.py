@@ -580,3 +580,38 @@ class TestExplainMethods:
         not_cond = NotCondition(cond_b)
         not_explain = not_cond.explain()
         assert not_explain == "NOT(Permission(app.view))"
+
+
+class TestSensitiveValueRedaction:
+    """explain() must not echo values whose name suggests a credential."""
+
+    def test_setting_condition_redacts_secret_value(self):
+        from django_stratagem.conditions import SettingCondition
+
+        cond = SettingCondition("STRIPE_API_KEY", "sk_live_supersecret")
+        explanation = cond.explain()
+        assert "sk_live_supersecret" not in explanation
+        assert "***redacted***" in explanation
+        assert "STRIPE_API_KEY" in explanation
+
+    def test_setting_condition_shows_non_sensitive_value(self):
+        from django_stratagem.conditions import SettingCondition
+
+        cond = SettingCondition("FEATURE_LEVEL", "premium")
+        explanation = cond.explain()
+        assert "premium" in explanation
+
+    def test_environment_condition_redacts_secret_value(self):
+        from django_stratagem.conditions import EnvironmentCondition
+
+        cond = EnvironmentCondition("APP_SECRET_TOKEN", "abc123")
+        explanation = cond.explain()
+        assert "abc123" not in explanation
+        assert "***redacted***" in explanation
+
+    def test_environment_condition_shows_non_sensitive_value(self):
+        from django_stratagem.conditions import EnvironmentCondition
+
+        cond = EnvironmentCondition("DEPLOY_STAGE", "production")
+        explanation = cond.explain()
+        assert "production" in explanation

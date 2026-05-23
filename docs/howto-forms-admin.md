@@ -300,3 +300,43 @@ An `AdminSite` subclass that adds a registry dashboard at `/admin/registry-dashb
 ### EnhancedDjangoStratagemAdminSite
 
 Extended dashboard at `/admin/enhanced-registry-dashboard/` with hierarchy visualization, parent requirements, and relationship information.
+
+## Registry Inspector
+
+django-stratagem ships a read-only inspector page that lists every registry,
+its implementations, and whether each is currently available (and why). To
+enable it, include the package URLs in your project's root `urls.py`:
+
+```python
+from django.urls import include, path
+
+urlpatterns = [
+    # ...
+    path("stratagem/", include("django_stratagem.urls")),
+]
+```
+
+The inspector is then reachable at `/stratagem/inspector/` and is restricted
+to staff users.
+
+### Linking it from the admin
+
+Do not add a `admin/index.html` template inside an installed app whose
+templates shadow `django.contrib.admin` (such as django-stratagem itself):
+`{% extends "admin/index.html" %}` would resolve to itself and recurse. Add
+the override in a project-level template directory configured in
+`TEMPLATES["DIRS"]` instead:
+
+```html
+{% extends "admin/index.html" %}
+{% block content %}
+{{ block.super }}
+<div class="module">
+    <h2>Django Stratagem</h2>
+    <ul><li><a href="{% url 'django_stratagem:registry-inspector' %}">Registry Inspector</a></li></ul>
+</div>
+{% endblock %}
+```
+
+The URL name is also available programmatically via the constant
+`django_stratagem.inspector.INSPECTOR_URL_NAME`.

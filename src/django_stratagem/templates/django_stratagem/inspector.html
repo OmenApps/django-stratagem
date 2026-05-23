@@ -1,0 +1,55 @@
+{% extends "admin/base_site.html" %}
+
+{% block extrastyle %}{{ block.super }}
+<style>
+    .registry-inspector table { border-collapse: collapse; width: 100%; margin-bottom: 2rem; }
+    .registry-inspector th, .registry-inspector td { border: 1px solid #ccc; padding: 6px 10px; text-align: left; }
+    .registry-inspector tr.impl-unavailable { background-color: #f3f3f3; }
+    .registry-inspector .status-available { color: #276f3a; font-weight: bold; }
+    .registry-inspector .status-unavailable { color: #c0392b; font-weight: bold; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="registry-inspector">
+    {% comment %}The admin chrome already renders the page title as an <h1> from the
+    "title" context variable, so this block starts at <h2> to avoid a duplicate h1.{% endcomment %}
+    {% for row in rows %}
+    <section class="registry-block">
+        <h2>{{ row.registry }}</h2>
+        {% if row.doc %}<p class="registry-doc">{{ row.doc }}</p>{% endif %}
+        <p class="registry-module"><code>{{ row.module }}</code></p>
+        <table>
+            <thead>
+                <tr>
+                    <th scope="col">Slug</th>
+                    <th scope="col">Name</th>
+                    <th scope="col">Priority</th>
+                    <th scope="col">Available</th>
+                    <th scope="col">Reason</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for impl in row.implementations %}
+                <tr class="{% if not impl.available %}impl-unavailable{% endif %}">
+                    <td><strong>{{ impl.slug }}</strong></td>
+                    <td>{{ impl.name }}</td>
+                    <td>{{ impl.priority }}</td>
+                    <td>
+                        {% if impl.available %}
+                        <span class="status-available">available</span>
+                        {% else %}
+                        <span class="status-unavailable">unavailable</span>
+                        {% endif %}
+                    </td>
+                    <td><code>{{ impl.reason }}</code></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </section>
+    {% empty %}
+    <p>No registries are currently registered.</p>
+    {% endfor %}
+</div>
+{% endblock %}
