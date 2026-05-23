@@ -51,6 +51,7 @@ howto-conditions
 howto-hierarchies
 howto-drf
 howto-plugins
+howto-testing
 ```
 
 ```{toctree}
