@@ -404,9 +404,10 @@ wheels = [
 
 [[package]]
 name = "django-stratagem"
-version = "2026.2.1b2"
+version = "2026.2.1b3"
 source = { editable = "." }
 dependencies = [
+    { name = "asgiref" },
     { name = "django", version = "5.2.11", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
     { name = "django", version = "6.0.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
@@ -449,6 +450,7 @@ docs = [
 
 [package.metadata]
 requires-dist = [
+    { name = "asgiref", specifier = ">=3.6" },
     { name = "django", specifier = ">=4.2" },
     { name = "django-waffle", marker = "extra == 'waffle'", specifier = ">=4.0" },
     { name = "djangorestframework", marker = "extra == 'drf'", specifier = ">=3.14" },
