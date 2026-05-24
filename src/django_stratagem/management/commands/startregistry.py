@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from django.core.management.base import CommandError
+from django.core.management.base import BaseCommand, CommandError
 
 
 def to_snake(name: str) -> str:
@@ -89,3 +89,42 @@ def write_registry_files(
         path.write_text(content)
         written.append(path)
     return written
+
+
+class Command(BaseCommand):
+    help = "Scaffold a new django-stratagem registry into an app."
+
+    def add_arguments(self, parser):
+        parser.add_argument("name", help="Registry base name, e.g. 'Notification'")
+        parser.add_argument("--app", required=True, help="Target app label")
+        parser.add_argument(
+            "--module",
+            default=None,
+            help="Implementations module name (default: <name>_implementations)",
+        )
+        parser.add_argument(
+            "--force",
+            action="store_true",
+            help="Overwrite existing files",
+        )
+
+    def handle(self, *args, **options):
+        from django.apps import apps
+
+        name = options["name"]
+        app_label = options["app"]
+        module = options["module"] or f"{to_snake(name)}_implementations"
+
+        try:
+            app_config = apps.get_app_config(app_label)
+        except LookupError as exc:
+            raise CommandError(f"No installed app with label '{app_label}'") from exc
+
+        written = write_registry_files(app_config.path, name, module, force=options["force"])
+        for path in written:
+            self.stdout.write(self.style.SUCCESS(f"Created {path}"))  # type: ignore[attr-defined]
+
+        self.stdout.write(
+            "Next steps: make sure the app is in INSTALLED_APPS. "
+            "The registry auto-discovers its implementations on startup."
+        )

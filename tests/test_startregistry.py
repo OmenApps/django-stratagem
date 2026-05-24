@@ -55,3 +55,39 @@ def test_write_registry_files_force_overwrites(tmp_path):
     write_registry_files(tmp_path, "Notification", "notification_implementations")
     # Should not raise with force=True.
     write_registry_files(tmp_path, "Notification", "notification_implementations", force=True)
+
+
+def test_command_writes_into_resolved_app_path(tmp_path, mocker):
+    from django.core.management import call_command
+
+    fake_config = mocker.Mock()
+    fake_config.path = str(tmp_path)
+    mocker.patch("django.apps.apps.get_app_config", return_value=fake_config)
+
+    call_command("startregistry", "Notification", "--app", "anyapp")
+
+    assert (tmp_path / "registry.py").exists()
+    assert (tmp_path / "notification_implementations.py").exists()
+
+
+def test_command_custom_module_name(tmp_path, mocker):
+    from django.core.management import call_command
+
+    fake_config = mocker.Mock()
+    fake_config.path = str(tmp_path)
+    mocker.patch("django.apps.apps.get_app_config", return_value=fake_config)
+
+    call_command("startregistry", "Payment", "--app", "anyapp", "--module", "gateways")
+
+    assert (tmp_path / "gateways.py").exists()
+    assert "PaymentRegistry" in (tmp_path / "registry.py").read_text()
+
+
+def test_command_errors_on_unknown_app(mocker):
+    from django.core.management import call_command
+    from django.core.management.base import CommandError
+
+    mocker.patch("django.apps.apps.get_app_config", side_effect=LookupError("nope"))
+
+    with pytest.raises(CommandError):
+        call_command("startregistry", "Notification", "--app", "missing")
