@@ -35,3 +35,30 @@ def test_webhook_visible_when_setting_enabled(notification_registry):
     with override_settings(NOTIFICATIONS_WEBHOOK_ENABLED=True):
         available = notification_registry.get_available_implementations({})
     assert "webhook" in available
+
+
+@pytest.fixture
+def payment_registry():
+    from examples.payments.registry import PaymentGatewayRegistry
+
+    original = dict(PaymentGatewayRegistry.implementations)
+    PaymentGatewayRegistry.discover_implementations()
+    yield PaymentGatewayRegistry
+    PaymentGatewayRegistry.implementations.clear()
+    PaymentGatewayRegistry.implementations.update(original)
+    PaymentGatewayRegistry.clear_cache()
+
+
+def test_payment_gateways_registered(payment_registry):
+    assert {"stripe", "paypal"} <= set(payment_registry.implementations)
+
+
+@pytest.mark.django_db
+def test_merchant_persists_selected_gateway(payment_registry):
+    from examples.payments.gateways import StripeGateway
+    from examples.payments.models import Merchant
+
+    merchant = Merchant.objects.create(name="Acme", gateway="stripe")
+    merchant.refresh_from_db()
+    assert merchant.gateway is StripeGateway
+    assert merchant.gateway().charge(500) == "stripe:500"
