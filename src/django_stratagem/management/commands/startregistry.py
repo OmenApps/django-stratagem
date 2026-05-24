@@ -6,6 +6,7 @@ import keyword
 import re
 from pathlib import Path
 
+from django.apps import apps
 from django.core.management.base import BaseCommand, CommandError
 
 
@@ -139,8 +140,6 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        from django.apps import apps
-
         name = options["name"]
         app_label = options["app"]
         _validate_identifier(name, "name")

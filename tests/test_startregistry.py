@@ -235,3 +235,34 @@ def test_generated_code_imports_and_autoregisters(tmp_path, monkeypatch):
     finally:
         for mod in [m for m in sys.modules if m.startswith("generated_pkg")]:
             del sys.modules[mod]
+
+
+def test_write_registry_files_rolls_back_on_write_failure(tmp_path, mocker):
+    from pathlib import Path
+
+    from django.core.management.base import CommandError
+
+    from django_stratagem.management.commands.startregistry import write_registry_files
+
+    # A pre-existing registry.py that --force will overwrite; its content must
+    # be restored if a later write fails mid-operation.
+    registry_file = tmp_path / "registry.py"
+    registry_file.write_text("ORIGINAL")
+
+    real_write = Path.write_text
+    calls = {"n": 0}
+
+    def flaky_write(self, data, *args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 2:  # fail on the implementations-module write
+            raise OSError("disk full")
+        return real_write(self, data, *args, **kwargs)
+
+    mocker.patch("pathlib.Path.write_text", flaky_write)
+
+    with pytest.raises(CommandError):
+        write_registry_files(tmp_path, "Notification", "notification_implementations", force=True)
+
+    # registry.py restored to its original content; the impl module not left behind.
+    assert registry_file.read_text() == "ORIGINAL"
+    assert not (tmp_path / "notification_implementations.py").exists()

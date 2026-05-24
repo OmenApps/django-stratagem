@@ -43,6 +43,9 @@ def override_availability(implementation: type[Any], *, available: bool = True) 
     Restores the implementation's own ``is_available`` (or removes the
     override, falling back to the inherited method) on exit.
     """
+    # Capture the class's OWN is_available (not an inherited one) so teardown can
+    # tell "had its own method" from "inherited it". The lambda closes over the
+    # fixed `available` value; classmethod() makes it a valid class attribute.
     original = implementation.__dict__.get("is_available", _MISSING)
     implementation.is_available = classmethod(lambda cls, context=None: available)
     try:
