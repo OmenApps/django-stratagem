@@ -61,3 +61,36 @@ def test_ais_available_defaults_context():
         pass
 
     assert async_to_sync(AlwaysOn.ais_available)() is True
+
+
+def test_aget_available_implementations(test_strategy_registry):
+    from tests.registries_fixtures import TestStrategyRegistry
+
+    result = async_to_sync(TestStrategyRegistry.aget_available_implementations)({})
+    assert {"email", "sms", "push"} <= set(result)
+
+
+def test_aget_available_filters_conditional(conditional_registry):
+    # ConditionalTestRegistry has BasicFeature (always) and PremiumFeature
+    # (only for premium users). With an empty context, premium is excluded.
+    from tests.registries_fixtures import ConditionalTestRegistry
+
+    result = async_to_sync(ConditionalTestRegistry.aget_available_implementations)({})
+    assert "basic_feature" in result
+    assert "premium_feature" not in result
+
+
+def test_aget_choices_for_context_sorted(test_strategy_registry):
+    from tests.registries_fixtures import TestStrategyRegistry
+
+    choices = async_to_sync(TestStrategyRegistry.aget_choices_for_context)({})
+    slugs = [slug for slug, _ in choices]
+    # email(10) < sms(20) < push(30) by priority
+    assert slugs == ["email", "sms", "push"]
+
+
+def test_aget_returns_instance(test_strategy_registry):
+    from tests.registries_fixtures import EmailStrategy, TestStrategyRegistry
+
+    impl = async_to_sync(TestStrategyRegistry.aget)(slug="email")
+    assert isinstance(impl, EmailStrategy)

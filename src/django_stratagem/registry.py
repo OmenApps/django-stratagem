@@ -5,6 +5,7 @@ from collections.abc import Callable
 from functools import wraps
 from typing import TYPE_CHECKING, Any, Generic, TypedDict, TypeVar, cast, overload
 
+from asgiref.sync import sync_to_async
 from django.core.cache import cache
 from django.db.models import Model
 from django.utils import timezone
@@ -570,6 +571,82 @@ class Registry(Generic[TInterface], metaclass=RegistryMeta):
             return cls.get(slug=first_slug)
 
         raise ImplementationNotFound("No implementations available in current context")
+
+    @classmethod
+    async def aget_available_implementations(cls, context: dict[str, Any] | None = None) -> dict[str, type[TInterface]]:
+        """Async variant of ``get_available_implementations``.
+
+        Prefers an implementation's async ``ais_available`` when present, and
+        otherwise runs its sync ``is_available`` in a thread.
+        """
+        available: dict[str, type[TInterface]] = {}
+        for slug, meta in cls.implementations.items():
+            impl_class = meta["klass"]
+            if impl_class is None:
+                continue
+
+            if cls._prefer_async_availability(impl_class):
+                ok = await impl_class.ais_available(context)
+            else:
+                is_available = getattr(impl_class, "is_available", None)
+                if callable(is_available):
+                    ok = await sync_to_async(is_available)(context)
+                else:
+                    ok = True
+
+            if ok:
+                available[slug] = cast("type[TInterface]", impl_class)
+        return available
+
+    @staticmethod
+    def _prefer_async_availability(impl_class: type[Any]) -> bool:
+        """Return True when an implementation's async ``ais_available`` should be used.
+
+        Prefers ``ais_available`` when it is callable, unless a sync ``is_available``
+        is defined more specifically in the MRO (i.e. the implementation overrides
+        only the sync method). This prevents an inherited base-class ``ais_available``
+        from bypassing an overridden ``is_available``.
+        """
+        ais_available = getattr(impl_class, "ais_available", None)
+        if not callable(ais_available):
+            return False
+
+        is_available = getattr(impl_class, "is_available", None)
+        if not callable(is_available):
+            return True
+
+        def defining_index(name: str) -> int:
+            for index, base in enumerate(impl_class.__mro__):
+                if name in base.__dict__:
+                    return index
+            return len(impl_class.__mro__)
+
+        # Lower index means more specific (closer to the implementation class).
+        # Equal indices mean both resolve to the same class (e.g. the base
+        # ConditionalInterface), where async is preferred so native acheck runs.
+        return defining_index("ais_available") <= defining_index("is_available")
+
+    @classmethod
+    async def aget_choices_for_context(cls, context: dict[str, Any] | None = None) -> list[tuple[str, str]]:
+        """Async variant of ``get_choices_for_context``."""
+        available = await cls.aget_available_implementations(context)
+        return [
+            (slug, cls.get_display_name(impl_class))
+            for slug, impl_class in sorted(
+                available.items(),
+                key=lambda item: cls.implementations[item[0]].get("priority", 0),
+            )
+        ]
+
+    @classmethod
+    async def aget(
+        cls,
+        *,
+        slug: str | None = None,
+        fully_qualified_name: str | None = None,
+    ) -> TInterface:
+        """Async variant of ``get`` (instantiation runs in a thread)."""
+        return await sync_to_async(cls.get)(slug=slug, fully_qualified_name=fully_qualified_name)
 
 
 class HierarchicalRegistry(Registry):
