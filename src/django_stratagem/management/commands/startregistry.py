@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import re
+from pathlib import Path
+
+from django.core.management.base import CommandError
 
 
 def to_snake(name: str) -> str:
@@ -57,3 +60,32 @@ class Default{name}({interface_cls}):
     def run(self):
         return "default"
 '''
+
+
+def write_registry_files(
+    base_dir: str | Path,
+    name: str,
+    module: str,
+    *,
+    force: bool = False,
+) -> list[Path]:
+    """Write ``registry.py`` and ``<module>.py`` into ``base_dir``.
+
+    Raises ``CommandError`` if a target file already exists and ``force`` is
+    False. Returns the list of written paths.
+    """
+    base = Path(base_dir)
+    targets = [
+        (base / "registry.py", render_registry_module(name, module)),
+        (base / f"{module}.py", render_implementations_module(name)),
+    ]
+
+    for path, _ in targets:
+        if path.exists() and not force:
+            raise CommandError(f"{path} already exists; pass --force to overwrite")
+
+    written: list[Path] = []
+    for path, content in targets:
+        path.write_text(content)
+        written.append(path)
+    return written
