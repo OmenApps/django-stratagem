@@ -88,7 +88,11 @@ class ConditionalInterface(Interface):
 
     @classmethod
     async def ais_available(cls, context: dict[str, Any] | None = None) -> bool:
-        """Async variant of ``is_available``."""
+        """Check if this implementation is available in the given context (async variant).
+
+        Delegates to the condition's ``acheck`` so a condition that overrides
+        ``acheck`` is evaluated natively rather than in a thread.
+        """
         if not cls.condition:
             return True
         if context is None:

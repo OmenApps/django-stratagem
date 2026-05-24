@@ -94,3 +94,60 @@ def test_aget_returns_instance(test_strategy_registry):
 
     impl = async_to_sync(TestStrategyRegistry.aget)(slug="email")
     assert isinstance(impl, EmailStrategy)
+
+
+def test_aget_by_fully_qualified_name(test_strategy_registry):
+    from tests.registries_fixtures import EmailStrategy, TestStrategyRegistry
+
+    impl = async_to_sync(TestStrategyRegistry.aget)(fully_qualified_name="tests.registries_fixtures.EmailStrategy")
+    assert isinstance(impl, EmailStrategy)
+
+
+def test_acheck_native_override_propagates():
+    # Proof of contract: a condition whose native async acheck differs from its
+    # sync is_met must use acheck (not is_met) on the async path.
+    from django_stratagem.conditions import Condition
+
+    class SyncFalseAsyncTrue(Condition):
+        def is_met(self, context):
+            return False
+
+        async def acheck(self, context):
+            return True
+
+    cond = SyncFalseAsyncTrue()
+    assert cond.is_met({}) is False
+    assert async_to_sync(cond.acheck)({}) is True
+
+
+def test_aget_available_calls_native_ais_available(conditional_registry):
+    # An implementation that natively overrides only ais_available (async) gets
+    # that path, exercising the more-derived-async branch of the MRO helper.
+    from tests.registries_fixtures import ConditionalTestInterface, ConditionalTestRegistry
+
+    class NativeAsyncFeature(ConditionalTestInterface):
+        slug = "native_async_feature"
+
+        @classmethod
+        async def ais_available(cls, context=None):
+            return bool((context or {}).get("native_ok", False))
+
+    available_on = async_to_sync(ConditionalTestRegistry.aget_available_implementations)({"native_ok": True})
+    assert "native_async_feature" in available_on
+
+    available_off = async_to_sync(ConditionalTestRegistry.aget_available_implementations)({"native_ok": False})
+    assert "native_async_feature" not in available_off
+
+
+def test_prefer_async_availability_ignores_sync_ais_available():
+    # A class defining a SYNC method named ais_available must not be awaited
+    # (that would raise "object can't be awaited"); the sync path is used instead.
+    from django_stratagem.interfaces import ConditionalInterface
+    from django_stratagem.registry import Registry
+
+    class SyncAis(ConditionalInterface):
+        @classmethod
+        def ais_available(cls, context=None):
+            return True
+
+    assert Registry._prefer_async_availability(SyncAis) is False

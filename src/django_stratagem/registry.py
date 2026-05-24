@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import logging
 from collections.abc import Callable
 from functools import wraps
@@ -501,10 +502,12 @@ class Registry(Generic[TInterface], metaclass=RegistryMeta):
 
         for slug, meta in cls.implementations.items():
             impl_class = meta["klass"]
+            if impl_class is None:
+                continue
 
             # Check if implementation has conditional availability
             is_available_method = getattr(impl_class, "is_available", None)
-            if impl_class is not None and callable(is_available_method):
+            if callable(is_available_method):
                 if not is_available_method(context):
                     continue
 
@@ -580,7 +583,9 @@ class Registry(Generic[TInterface], metaclass=RegistryMeta):
         otherwise runs its sync ``is_available`` in a thread.
         """
         available: dict[str, type[TInterface]] = {}
-        for slug, meta in cls.implementations.items():
+        # Snapshot the items: the loop awaits between iterations, so another
+        # coroutine could mutate the implementations dict mid-iteration.
+        for slug, meta in list(cls.implementations.items()):
             impl_class = meta["klass"]
             if impl_class is None:
                 continue
@@ -602,13 +607,14 @@ class Registry(Generic[TInterface], metaclass=RegistryMeta):
     def _prefer_async_availability(impl_class: type[Any]) -> bool:
         """Return True when an implementation's async ``ais_available`` should be used.
 
-        Prefers ``ais_available`` when it is callable, unless a sync ``is_available``
-        is defined more specifically in the MRO (i.e. the implementation overrides
-        only the sync method). This prevents an inherited base-class ``ais_available``
-        from bypassing an overridden ``is_available``.
+        Prefers ``ais_available`` when it is an async (coroutine) function, unless a
+        sync ``is_available`` is defined more specifically in the MRO (i.e. the
+        implementation overrides only the sync method). This prevents an inherited
+        base-class ``ais_available`` from bypassing an overridden ``is_available``,
+        and avoids awaiting a non-coroutine ``ais_available`` defined by mistake.
         """
         ais_available = getattr(impl_class, "ais_available", None)
-        if not callable(ais_available):
+        if not inspect.iscoroutinefunction(ais_available):
             return False
 
         is_available = getattr(impl_class, "is_available", None)

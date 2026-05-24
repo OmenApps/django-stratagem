@@ -63,9 +63,13 @@ class Condition(ABC):
     async def acheck(self, context: dict[str, Any]) -> bool:
         """Async evaluation of the condition.
 
-        Defaults to running the synchronous ``is_met`` in a thread. Override
-        in subclasses that can evaluate natively async.
+        Defaults to running the synchronous ``is_met`` in a thread. Override in
+        subclasses that can evaluate natively async; overrides must stay
+        non-blocking (wrap any blocking work in ``sync_to_async`` themselves).
         """
+        # thread_sensitive=True (the default) keeps ORM-touching conditions
+        # (e.g. PermissionCondition, GroupCondition) on the main thread, which
+        # Django requires for thread-local database connections.
         return await sync_to_async(self.is_met)(context)
 
     def __and__(self, other: "Condition") -> "CompoundCondition":
@@ -115,6 +119,7 @@ class AllConditions(CompoundCondition):
         return all_met, explanation
 
     async def acheck(self, context: dict[str, Any]) -> bool:
+        """Pass only if every child passes; awaits children sequentially, short-circuiting on first failure."""
         for cond in self.conditions:
             if not await cond.acheck(context):
                 return False
@@ -144,6 +149,7 @@ class AnyCondition(CompoundCondition):
         return any_met, explanation
 
     async def acheck(self, context: dict[str, Any]) -> bool:
+        """Pass if any child passes; awaits children sequentially, short-circuiting on first success."""
         for cond in self.conditions:
             if await cond.acheck(context):
                 return True
@@ -170,6 +176,7 @@ class NotCondition(Condition):
         return result, explanation
 
     async def acheck(self, context: dict[str, Any]) -> bool:
+        """Return the negation of the wrapped condition's async check."""
         return not await self.condition.acheck(context)
 
 
