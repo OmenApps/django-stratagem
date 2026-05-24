@@ -85,3 +85,12 @@ class ConditionalInterface(Interface):
         if context is None:
             context = {}
         return cls.condition.check_with_details(context)
+
+    @classmethod
+    async def ais_available(cls, context: dict[str, Any] | None = None) -> bool:
+        """Async variant of ``is_available``."""
+        if not cls.condition:
+            return True
+        if context is None:
+            context = {}
+        return await cls.condition.acheck(context)

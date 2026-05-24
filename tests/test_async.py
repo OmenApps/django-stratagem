@@ -32,3 +32,32 @@ def test_not_condition_acheck():
 
     falsy = CallableCondition(lambda ctx: False)
     assert async_to_sync((~falsy).acheck)({}) is True
+
+
+def test_ais_available_no_condition():
+    from django_stratagem.interfaces import ConditionalInterface
+
+    class AlwaysOn(ConditionalInterface):
+        pass
+
+    assert async_to_sync(AlwaysOn.ais_available)({}) is True
+
+
+def test_ais_available_with_condition():
+    from django_stratagem.conditions import CallableCondition
+    from django_stratagem.interfaces import ConditionalInterface
+
+    class Gated(ConditionalInterface):
+        condition = CallableCondition(lambda ctx: ctx.get("ok", False))
+
+    assert async_to_sync(Gated.ais_available)({"ok": True}) is True
+    assert async_to_sync(Gated.ais_available)({"ok": False}) is False
+
+
+def test_ais_available_defaults_context():
+    from django_stratagem.interfaces import ConditionalInterface
+
+    class AlwaysOn(ConditionalInterface):
+        pass
+
+    assert async_to_sync(AlwaysOn.ais_available)() is True
