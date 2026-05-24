@@ -97,9 +97,12 @@ def write_registry_files(
         (base / f"{module}.py", render_implementations_module(name)),
     ]
 
-    pre_existing = {path for path, _ in targets if path.exists()}
-    if pre_existing and not force:
-        raise CommandError(f"{sorted(str(p) for p in pre_existing)} already exists; pass --force to overwrite")
+    # Back up the original content of any file we are about to overwrite so a
+    # mid-write failure can be rolled back to the exact prior state.
+    backups = {path: path.read_text() for path, _ in targets if path.exists()}
+    if backups and not force:
+        existing = ", ".join(sorted(str(p) for p in backups))
+        raise CommandError(f"Already exists (pass --force to overwrite): {existing}")
 
     written: list[Path] = []
     try:
@@ -107,10 +110,12 @@ def write_registry_files(
             path.write_text(content)
             written.append(path)
     except OSError as exc:
-        # Roll back only files this command created, so a failed write never
-        # deletes a pre-existing file the caller asked to overwrite with --force.
+        # Restore overwritten files to their original content and remove files
+        # this command newly created, so a failed write leaves no partial state.
         for path in written:
-            if path not in pre_existing:
+            if path in backups:
+                path.write_text(backups[path])
+            else:
                 path.unlink(missing_ok=True)
         raise CommandError(f"Failed to write registry files: {exc}") from exc
     return written
@@ -141,7 +146,7 @@ class Command(BaseCommand):
         _validate_identifier(name, "name")
         module = options["module"] or f"{to_snake(name)}_implementations"
         _validate_identifier(module, "--module")
-        if module == "registry":
+        if module.casefold() == "registry":
             raise CommandError("--module 'registry' collides with the generated registry.py; choose another name")
 
         try:

@@ -148,12 +148,16 @@ def test_command_rejects_registry_module_collision(tmp_path, mocker):
     from django.core.management import call_command
     from django.core.management.base import CommandError
 
+    # Validation fires before the app is resolved, so get_app_config must not be reached.
     fake_config = mocker.Mock()
     fake_config.path = str(tmp_path)
-    mocker.patch("django.apps.apps.get_app_config", return_value=fake_config)
+    get_app_config = mocker.patch("django.apps.apps.get_app_config", return_value=fake_config)
 
     with pytest.raises(CommandError):
         call_command("startregistry", "Notification", "--app", "anyapp", "--module", "registry")
+
+    get_app_config.assert_not_called()
+    assert not (tmp_path / "registry.py").exists()
 
 
 def test_command_rejects_non_ascii_name(mocker):
