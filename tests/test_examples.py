@@ -62,3 +62,41 @@ def test_merchant_persists_selected_gateway(payment_registry):
     merchant.refresh_from_db()
     assert merchant.gateway is StripeGateway
     assert merchant.gateway().charge(500) == "stripe:500"
+
+
+@pytest.fixture
+def export_registry():
+    from examples.exports.registry import ExportFormatRegistry
+
+    original = dict(ExportFormatRegistry.implementations)
+    ExportFormatRegistry.discover_implementations()
+    yield ExportFormatRegistry
+    ExportFormatRegistry.implementations.clear()
+    ExportFormatRegistry.implementations.update(original)
+    ExportFormatRegistry.clear_cache()
+
+
+def test_export_formats_registered(export_registry):
+    assert {"csv", "json"} <= set(export_registry.implementations)
+
+
+def test_export_format_renders(export_registry):
+    json_format = export_registry.get(slug="json")
+    assert json_format.render([{"a": 1}]) == b'[{"a": 1}]'
+
+
+def test_export_serializer_accepts_valid_slug(export_registry):
+    pytest.importorskip("rest_framework")
+    from examples.exports.serializers import ExportRequestSerializer
+
+    serializer = ExportRequestSerializer(data={"format": "csv", "row_count": 3})
+    assert serializer.is_valid(), serializer.errors
+
+
+def test_export_serializer_rejects_unknown_slug(export_registry):
+    pytest.importorskip("rest_framework")
+    from examples.exports.serializers import ExportRequestSerializer
+
+    serializer = ExportRequestSerializer(data={"format": "nope"})
+    assert not serializer.is_valid()
+    assert "format" in serializer.errors

@@ -35,6 +35,7 @@ INSTALLED_APPS = [
     # Examples (validated by tests/test_examples.py)
     "examples.notifications",
     "examples.payments",
+    "examples.exports",
 ]
 
 MIDDLEWARE: list[str] = [
