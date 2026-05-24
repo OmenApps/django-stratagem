@@ -91,3 +91,39 @@ def test_command_errors_on_unknown_app(mocker):
 
     with pytest.raises(CommandError):
         call_command("startregistry", "Notification", "--app", "missing")
+
+
+def test_generated_code_imports_and_autoregisters(tmp_path, monkeypatch):
+    """The generated registry/implementations modules import and auto-register.
+
+    The command tests mock the app path and only check rendered strings, so this
+    test guards that the actual generated source is valid Python that wires up
+    auto-registration end to end.
+    """
+    import importlib
+    import sys
+
+    from django_stratagem.management.commands.startregistry import write_registry_files
+    from django_stratagem.registry import Registry
+
+    pkg = tmp_path / "generated_pkg"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    write_registry_files(pkg, "Greeting", "greeting_implementations")
+
+    monkeypatch.syspath_prepend(str(tmp_path))
+    for mod in [m for m in sys.modules if m.startswith("generated_pkg")]:
+        del sys.modules[mod]
+
+    try:
+        registry_mod = importlib.import_module("generated_pkg.registry")
+        impl_mod = importlib.import_module("generated_pkg.greeting_implementations")
+
+        assert issubclass(registry_mod.GreetingRegistry, Registry)
+        assert registry_mod.GreetingRegistry.implementations_module == "greeting_implementations"
+        assert registry_mod.GreetingInterface.registry is registry_mod.GreetingRegistry
+        assert "default" in registry_mod.GreetingRegistry.implementations
+        assert impl_mod.DefaultGreeting().run() == "default"
+    finally:
+        for mod in [m for m in sys.modules if m.startswith("generated_pkg")]:
+            del sys.modules[mod]
