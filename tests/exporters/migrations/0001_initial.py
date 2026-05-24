@@ -7,18 +7,21 @@ import tests.exporters.registry
 
 
 class Migration(migrations.Migration):
-
     initial = True
 
-    dependencies = [
-    ]
+    dependencies = []
 
     operations = [
         migrations.CreateModel(
-            name='ExportConfig',
+            name="ExportConfig",
             fields=[
-                ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
-                ('exporter_type', django_stratagem.fields.RegistryClassField(max_length=100, registry=tests.exporters.registry.ExporterRegistry)),
+                ("id", models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name="ID")),
+                (
+                    "exporter_type",
+                    django_stratagem.fields.RegistryClassField(
+                        max_length=100, registry=tests.exporters.registry.ExporterRegistry
+                    ),
+                ),
             ],
         ),
     ]
