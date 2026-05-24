@@ -53,6 +53,7 @@ howto-hierarchies
 howto-drf
 howto-plugins
 howto-testing
+howto-async
 ```
 
 ```{toctree}
