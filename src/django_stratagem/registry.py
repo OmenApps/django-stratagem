@@ -576,6 +576,22 @@ class Registry(Generic[TInterface], metaclass=RegistryMeta):
         raise ImplementationNotFound("No implementations available in current context")
 
     @classmethod
+    async def _ais_impl_available(cls, impl_class: type[Any], context: dict[str, Any] | None) -> bool:
+        """Resolve an implementation's availability on the async path.
+
+        Prefers a native async ``ais_available``; otherwise runs the sync
+        ``is_available`` in a thread. An implementation with neither is always
+        available. Shared by ``aget_available_implementations`` and
+        ``aget_for_context``.
+        """
+        if cls._prefer_async_availability(impl_class):
+            return bool(await impl_class.ais_available(context))
+        is_available = getattr(impl_class, "is_available", None)
+        if callable(is_available):
+            return bool(await sync_to_async(is_available)(context))
+        return True
+
+    @classmethod
     async def aget_available_implementations(cls, context: dict[str, Any] | None = None) -> dict[str, type[TInterface]]:
         """Async variant of ``get_available_implementations``.
 
@@ -589,17 +605,7 @@ class Registry(Generic[TInterface], metaclass=RegistryMeta):
             impl_class = meta["klass"]
             if impl_class is None:
                 continue
-
-            if cls._prefer_async_availability(impl_class):
-                ok = await impl_class.ais_available(context)
-            else:
-                is_available = getattr(impl_class, "is_available", None)
-                if callable(is_available):
-                    ok = await sync_to_async(is_available)(context)
-                else:
-                    ok = True
-
-            if ok:
+            if await cls._ais_impl_available(impl_class, context):
                 available[slug] = cast("type[TInterface]", impl_class)
         return available
 
@@ -653,6 +659,63 @@ class Registry(Generic[TInterface], metaclass=RegistryMeta):
     ) -> TInterface:
         """Async variant of ``get`` (instantiation runs in a thread)."""
         return await sync_to_async(cls.get)(slug=slug, fully_qualified_name=fully_qualified_name)
+
+    @classmethod
+    async def aget_choices(cls) -> list[tuple[str, str]]:
+        """Async variant of ``get_choices`` using Django's async cache API.
+
+        Shares the same cache key as ``get_choices``, so the sync and async
+        paths reuse each other's cached value.
+        """
+        key = cls.get_cache_key("choices")
+        choices = await cache.aget(key)
+        if choices is None:
+            choices = []
+            for slug, meta in sorted(cls.implementations.items(), key=lambda item: item[1].get("priority", 0)):
+                implementation = cast("type[TInterface]", meta["klass"])
+                choices.append((slug, cls.get_display_name(implementation)))
+            await cache.aset(key, choices, get_cache_timeout())
+            await cache.aset(cls.get_cache_key("last_updated"), timezone.now().isoformat(), get_cache_timeout())
+        return choices
+
+    @classmethod
+    async def aget_for_context(
+        cls,
+        context: dict[str, Any] | None = None,
+        *,
+        slug: str | None = None,
+        fully_qualified_name: str | None = None,
+        fallback: str | None = None,
+    ) -> TInterface:
+        """Async variant of ``get_for_context``.
+
+        Returns the requested implementation if available, else the ``fallback``,
+        else the first available implementation, mirroring the sync method.
+        """
+        try:
+            if slug:
+                implementation = await cls.aget(slug=slug)
+            elif fully_qualified_name:
+                implementation = await cls.aget(fully_qualified_name=fully_qualified_name)
+            else:
+                implementation = None
+
+            if implementation is not None:
+                if await cls._ais_impl_available(type(implementation), context):
+                    return implementation
+                logger.warning("Implementation '%s' not available in current context", slug or fully_qualified_name)
+        except (ImplementationNotFound, ImportError, AttributeError, ValueError):
+            pass
+
+        if fallback:
+            return await cls.aget(slug=fallback)
+
+        available = await cls.aget_available_implementations(context)
+        if available:
+            first_slug = next(iter(available))
+            return await cls.aget(slug=first_slug)
+
+        raise ImplementationNotFound("No implementations available in current context")
 
 
 class HierarchicalRegistry(Registry):

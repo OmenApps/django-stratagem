@@ -1,10 +1,12 @@
 # Using registries from async code
 
-Each context-aware read method has an `a`-prefixed async counterpart
-(`aget_available_implementations`, `aget_choices_for_context`, `aget`). They
-share the sync behavior and fall back to running sync hooks in a thread when an
-implementation has not provided an async one. These methods require a running
-event loop (an async/ASGI context); from sync code, bridge them with
+Each context-aware read method has an `a`-prefixed async counterpart:
+`aget`, `aget_choices` (cached), `aget_choices_for_context`,
+`aget_available_implementations`, and `aget_for_context`. They share the sync
+behavior and fall back to running sync hooks in a thread when an implementation
+has not provided an async one. `aget_choices` uses Django's async cache API and
+shares its cache key with the sync `get_choices`. These methods require a
+running event loop (an async/ASGI context); from sync code, bridge them with
 `asgiref.sync.async_to_sync`.
 
 ```python
@@ -39,7 +41,6 @@ class RemoteFlagCondition(Condition):
 
 ## Not yet async
 
-`get_for_context` (the context-aware fetch-with-fallback helper) has no async
-counterpart yet. Use `aget_available_implementations` plus `aget(slug=...)` to
-build the equivalent flow, or call `get_for_context` through
-`asgiref.sync.sync_to_async`.
+The DRF serializer fields (`DrfRegistryField`, `DrfMultipleRegistryField`) do
+not have async validation paths yet. Use them from synchronous serializers, or
+bridge with `asgiref.sync` if you need them in an async flow.

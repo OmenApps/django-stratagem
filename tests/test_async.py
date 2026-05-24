@@ -151,3 +151,48 @@ def test_prefer_async_availability_ignores_sync_ais_available():
             return True
 
     assert Registry._prefer_async_availability(SyncAis) is False
+
+
+def test_aget_choices_returns_priority_sorted(test_strategy_registry):
+    from tests.registries_fixtures import TestStrategyRegistry
+
+    TestStrategyRegistry.clear_cache()
+    choices = async_to_sync(TestStrategyRegistry.aget_choices)()
+    assert [slug for slug, _ in choices] == ["email", "sms", "push"]
+
+
+def test_aget_choices_reads_shared_cache(test_strategy_registry):
+    # aget_choices reads the same cache key sync get_choices populates.
+    from django.core.cache import cache
+
+    from tests.registries_fixtures import TestStrategyRegistry
+
+    sentinel = [("x", "X")]
+    cache.set(TestStrategyRegistry.get_cache_key("choices"), sentinel)
+    try:
+        assert async_to_sync(TestStrategyRegistry.aget_choices)() == sentinel
+    finally:
+        TestStrategyRegistry.clear_cache()
+
+
+def test_aget_for_context_returns_requested(test_strategy_registry):
+    from tests.registries_fixtures import EmailStrategy, TestStrategyRegistry
+
+    impl = async_to_sync(TestStrategyRegistry.aget_for_context)({}, slug="email")
+    assert isinstance(impl, EmailStrategy)
+
+
+def test_aget_for_context_uses_fallback_when_unavailable(conditional_registry):
+    from tests.registries_fixtures import BasicFeature, ConditionalTestRegistry
+
+    # premium_feature is unavailable for an empty context; fall back to basic_feature.
+    impl = async_to_sync(ConditionalTestRegistry.aget_for_context)({}, slug="premium_feature", fallback="basic_feature")
+    assert isinstance(impl, BasicFeature)
+
+
+def test_aget_for_context_first_available_when_unavailable(conditional_registry):
+    from tests.registries_fixtures import BasicFeature, ConditionalTestRegistry
+
+    # No fallback: returns the first available implementation (basic_feature).
+    impl = async_to_sync(ConditionalTestRegistry.aget_for_context)({}, slug="premium_feature")
+    assert isinstance(impl, BasicFeature)
