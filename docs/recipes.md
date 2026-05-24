@@ -24,6 +24,8 @@ channel.send("Build finished")  # "email:Build finished"
 `RegistryClassField`. Set it by slug; read it back as the class.
 
 ```python
+from examples.payments.models import Merchant
+
 merchant = Merchant.objects.create(name="Acme", gateway="stripe")
 merchant.gateway().charge(500)  # "stripe:500"
 ```
@@ -34,6 +36,8 @@ merchant.gateway().charge(500)  # "stripe:500"
 `DrfRegistryField` in a DRF serializer, validating the requested format.
 
 ```python
+from examples.exports.serializers import ExportRequestSerializer
+
 serializer = ExportRequestSerializer(data={"format": "csv", "row_count": 3})
 serializer.is_valid()  # True
 ```
