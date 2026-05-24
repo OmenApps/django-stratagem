@@ -5,6 +5,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any
 
+from asgiref.sync import sync_to_async
 from django.conf import settings
 from django.utils import timezone
 
@@ -59,6 +60,14 @@ class Condition(ABC):
         logger.debug("Condition check: %s", explanation)
         return result, explanation
 
+    async def acheck(self, context: dict[str, Any]) -> bool:
+        """Async evaluation of the condition.
+
+        Defaults to running the synchronous ``is_met`` in a thread. Override
+        in subclasses that can evaluate natively async.
+        """
+        return await sync_to_async(self.is_met)(context)
+
     def __and__(self, other: "Condition") -> "CompoundCondition":
         """Combine conditions with AND logic."""
         return AllConditions([self, other])
@@ -105,6 +114,12 @@ class AllConditions(CompoundCondition):
         logger.debug("Condition check: %s", explanation)
         return all_met, explanation
 
+    async def acheck(self, context: dict[str, Any]) -> bool:
+        for cond in self.conditions:
+            if not await cond.acheck(context):
+                return False
+        return True
+
 
 class AnyCondition(CompoundCondition):
     """At least one condition must be met."""
@@ -128,6 +143,12 @@ class AnyCondition(CompoundCondition):
         logger.debug("Condition check: %s", explanation)
         return any_met, explanation
 
+    async def acheck(self, context: dict[str, Any]) -> bool:
+        for cond in self.conditions:
+            if await cond.acheck(context):
+                return True
+        return False
+
 
 class NotCondition(Condition):
     """Negates a condition."""
@@ -147,6 +168,9 @@ class NotCondition(Condition):
         explanation = f"NotCondition({'passed' if result else 'failed'}): [{inner_detail}]"
         logger.debug("Condition check: %s", explanation)
         return result, explanation
+
+    async def acheck(self, context: dict[str, Any]) -> bool:
+        return not await self.condition.acheck(context)
 
 
 class FeatureFlagCondition(Condition):
