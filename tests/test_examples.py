@@ -6,12 +6,11 @@ from django.test import override_settings
 def notification_registry():
     from examples.notifications.registry import NotificationRegistry
 
-    original = dict(NotificationRegistry.implementations)
-    NotificationRegistry.discover_implementations()
-    yield NotificationRegistry
-    NotificationRegistry.implementations.clear()
-    NotificationRegistry.implementations.update(original)
-    NotificationRegistry.clear_cache()
+    from django_stratagem.testing import isolate_registries
+
+    with isolate_registries():
+        NotificationRegistry.discover_implementations()
+        yield NotificationRegistry
 
 
 def test_notification_channels_registered(notification_registry):
@@ -41,12 +40,11 @@ def test_webhook_visible_when_setting_enabled(notification_registry):
 def payment_registry():
     from examples.payments.registry import PaymentGatewayRegistry
 
-    original = dict(PaymentGatewayRegistry.implementations)
-    PaymentGatewayRegistry.discover_implementations()
-    yield PaymentGatewayRegistry
-    PaymentGatewayRegistry.implementations.clear()
-    PaymentGatewayRegistry.implementations.update(original)
-    PaymentGatewayRegistry.clear_cache()
+    from django_stratagem.testing import isolate_registries
+
+    with isolate_registries():
+        PaymentGatewayRegistry.discover_implementations()
+        yield PaymentGatewayRegistry
 
 
 def test_payment_gateways_registered(payment_registry):
@@ -68,12 +66,11 @@ def test_merchant_persists_selected_gateway(payment_registry):
 def export_registry():
     from examples.exports.registry import ExportFormatRegistry
 
-    original = dict(ExportFormatRegistry.implementations)
-    ExportFormatRegistry.discover_implementations()
-    yield ExportFormatRegistry
-    ExportFormatRegistry.implementations.clear()
-    ExportFormatRegistry.implementations.update(original)
-    ExportFormatRegistry.clear_cache()
+    from django_stratagem.testing import isolate_registries
+
+    with isolate_registries():
+        ExportFormatRegistry.discover_implementations()
+        yield ExportFormatRegistry
 
 
 def test_export_formats_registered(export_registry):

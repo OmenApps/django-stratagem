@@ -21,13 +21,16 @@ channel.send("Build finished")  # "email:Build finished"
 ## Payments: a gateway stored per merchant
 
 `examples/payments/` stores a merchant's chosen gateway in a
-`RegistryClassField`. Set it by slug; read it back as the class.
+`RegistryClassField`. Set it by slug; read it back as the implementation
+*class* (use `RegistryField` instead if you want an instance). Because
+`merchant.gateway` is the class, `merchant.gateway()` constructs an instance.
 
 ```python
 from examples.payments.models import Merchant
 
 merchant = Merchant.objects.create(name="Acme", gateway="stripe")
-merchant.gateway().charge(500)  # "stripe:500"
+merchant.gateway  # the StripeGateway class
+merchant.gateway().charge(500)  # construct an instance, then "stripe:500"
 ```
 
 ## Exports: a format chosen through an API

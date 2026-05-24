@@ -29,6 +29,7 @@ def _clean_stratagem_registry():
     for reg, impls in original_implementations.items():
         reg.implementations.clear()
         reg.implementations.update(impls)
+        reg.clear_cache()
 
 
 @pytest.fixture(scope="function")
