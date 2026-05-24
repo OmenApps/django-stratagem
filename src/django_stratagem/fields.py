@@ -619,9 +619,7 @@ class AbstractRegistryField(Field):
         # Strip auto-added validators to prevent duplication in deconstruct/reconstruct (clone, makemigrations, etc.)
         if "validators" in kwargs:
             kwargs["validators"] = [
-                v
-                for v in kwargs["validators"]
-                if not isinstance(v, (ClassnameValidator, RegistryValidator))
+                v for v in kwargs["validators"] if not isinstance(v, (ClassnameValidator, RegistryValidator))
             ]
             if not kwargs["validators"]:
                 del kwargs["validators"]
