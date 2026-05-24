@@ -36,6 +36,7 @@ The usual approach is a mess of nested `if/elif` chains, settings flags, or one-
 :caption: Tutorials
 
 quickstart
+recipes
 tutorial
 tutorial-construction
 ```
