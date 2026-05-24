@@ -28,6 +28,22 @@ For DRF integration, install the optional extra:
 pip install django-stratagem[drf]
 ```
 
+## Scaffold a registry
+
+Generate a registry, interface, and implementations module in one step:
+
+```bash
+python manage.py startregistry Notification --app myapp
+```
+
+This creates `myapp/registry.py` (a `NotificationRegistry` and
+`NotificationInterface`) and `myapp/notification_implementations.py` (a
+`DefaultNotification` sample). Pass `--module gateways` to name the
+implementations file yourself, and `--force` to overwrite existing files.
+
+Edit the generated `slug` values and logic, and the registry auto-discovers
+your implementations on the next startup.
+
 ## Core Concepts
 
 The main pieces are a **Registry** (holds a set of implementations), an **Interface** (the base class implementations extend), **implementations** (concrete classes with a `slug`), and **auto-discovery** (imports them at startup). You define a registry by subclassing `Registry` and setting `implementations_module` to name the module where implementations live. Each implementation subclasses your `Interface`, sets a unique `slug`, and optionally provides `description`, `icon`, and `priority`. On app startup, django-stratagem calls `autodiscover_modules()` for each registry's `implementations_module`, importing and registering everything automatically.
