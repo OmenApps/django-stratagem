@@ -249,25 +249,30 @@ class Registry(Generic[TInterface], metaclass=RegistryMeta):
         PluginLoader.load_plugin_implementations(cls)
 
     @classmethod
+    def _build_choices(cls) -> list[tuple[str, str]]:
+        """Build the priority-sorted list of (slug, label) tuples from implementations.
+
+        Shared by the sync ``get_choices`` and async ``aget_choices`` so the
+        build logic stays in one place. Skips entries whose class is ``None``.
+        """
+        choices = []
+        for slug, meta in sorted(cls.implementations.items(), key=lambda item: item[1].get("priority", 0)):
+            implementation = meta["klass"]
+            if implementation is None:
+                continue
+            choices.append((slug, cls.get_display_name(cast("type[Interface]", implementation))))
+        return choices
+
+    @classmethod
     @skip_during_migrations
     def get_choices(cls) -> list[tuple[str, str]]:
         """Return a list of (slug, label) tuples, using cache if available."""
         key = cls.get_cache_key("choices")
         choices = cache.get(key)
         if choices is None:
-            choices = []
-            for slug, meta in sorted(
-                cls.implementations.items(),
-                key=lambda item: item[1].get("priority", 0),
-            ):
-                implementation = cast("type[Interface]", meta["klass"])
-                choices.append((slug, cls.get_display_name(implementation)))
+            choices = cls._build_choices()
             cache.set(key, choices, get_cache_timeout())
-            cache.set(
-                cls.get_cache_key("last_updated"),
-                timezone.now().isoformat(),
-                get_cache_timeout(),
-            )
+            cache.set(cls.get_cache_key("last_updated"), timezone.now().isoformat(), get_cache_timeout())
             logger.debug("Choices cache populated for %s", cls.__name__)
         return choices
 
@@ -576,7 +581,7 @@ class Registry(Generic[TInterface], metaclass=RegistryMeta):
         raise ImplementationNotFound("No implementations available in current context")
 
     @classmethod
-    async def _ais_impl_available(cls, impl_class: type[Any], context: dict[str, Any] | None) -> bool:
+    async def _resolve_async_availability(cls, impl_class: type[Any], context: dict[str, Any] | None) -> bool:
         """Resolve an implementation's availability on the async path.
 
         Prefers a native async ``ais_available``; otherwise runs the sync
@@ -605,7 +610,7 @@ class Registry(Generic[TInterface], metaclass=RegistryMeta):
             impl_class = meta["klass"]
             if impl_class is None:
                 continue
-            if await cls._ais_impl_available(impl_class, context):
+            if await cls._resolve_async_availability(impl_class, context):
                 available[slug] = cast("type[TInterface]", impl_class)
         return available
 
@@ -665,17 +670,19 @@ class Registry(Generic[TInterface], metaclass=RegistryMeta):
         """Async variant of ``get_choices`` using Django's async cache API.
 
         Shares the same cache key as ``get_choices``, so the sync and async
-        paths reuse each other's cached value.
+        paths reuse each other's cached value. Like ``get_choices`` (which uses
+        the ``skip_during_migrations`` decorator), this returns an empty list
+        while migrations are running.
         """
+        if is_running_migrations():
+            return []
         key = cls.get_cache_key("choices")
         choices = await cache.aget(key)
         if choices is None:
-            choices = []
-            for slug, meta in sorted(cls.implementations.items(), key=lambda item: item[1].get("priority", 0)):
-                implementation = cast("type[TInterface]", meta["klass"])
-                choices.append((slug, cls.get_display_name(implementation)))
+            choices = cls._build_choices()
             await cache.aset(key, choices, get_cache_timeout())
             await cache.aset(cls.get_cache_key("last_updated"), timezone.now().isoformat(), get_cache_timeout())
+            logger.debug("Choices cache populated for %s", cls.__name__)
         return choices
 
     @classmethod
@@ -701,7 +708,7 @@ class Registry(Generic[TInterface], metaclass=RegistryMeta):
                 implementation = None
 
             if implementation is not None:
-                if await cls._ais_impl_available(type(implementation), context):
+                if await cls._resolve_async_availability(type(implementation), context):
                     return implementation
                 logger.warning("Implementation '%s' not available in current context", slug or fully_qualified_name)
         except (ImplementationNotFound, ImportError, AttributeError, ValueError):

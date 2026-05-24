@@ -1,3 +1,4 @@
+import pytest
 from asgiref.sync import async_to_sync
 
 
@@ -154,11 +155,15 @@ def test_prefer_async_availability_ignores_sync_ais_available():
 
 
 def test_aget_choices_returns_priority_sorted(test_strategy_registry):
+    from django.core.cache import cache
+
     from tests.registries_fixtures import TestStrategyRegistry
 
     TestStrategyRegistry.clear_cache()
     choices = async_to_sync(TestStrategyRegistry.aget_choices)()
     assert [slug for slug, _ in choices] == ["email", "sms", "push"]
+    # The cache-miss path must have populated the shared cache key.
+    assert async_to_sync(cache.aget)(TestStrategyRegistry.get_cache_key("choices")) == choices
 
 
 def test_aget_choices_reads_shared_cache(test_strategy_registry):
@@ -196,3 +201,22 @@ def test_aget_for_context_first_available_when_unavailable(conditional_registry)
     # No fallback: returns the first available implementation (basic_feature).
     impl = async_to_sync(ConditionalTestRegistry.aget_for_context)({}, slug="premium_feature")
     assert isinstance(impl, BasicFeature)
+
+
+def test_aget_for_context_by_fully_qualified_name(test_strategy_registry):
+    from tests.registries_fixtures import EmailStrategy, TestStrategyRegistry
+
+    impl = async_to_sync(TestStrategyRegistry.aget_for_context)(
+        {}, fully_qualified_name="tests.registries_fixtures.EmailStrategy"
+    )
+    assert isinstance(impl, EmailStrategy)
+
+
+def test_aget_for_context_raises_when_nothing_available(conditional_registry):
+    from django_stratagem.exceptions import ImplementationNotFound
+    from tests.registries_fixtures import ConditionalTestRegistry
+
+    # Clear all implementations so nothing is available; the fixture restores them.
+    ConditionalTestRegistry.implementations.clear()
+    with pytest.raises(ImplementationNotFound):
+        async_to_sync(ConditionalTestRegistry.aget_for_context)({})
