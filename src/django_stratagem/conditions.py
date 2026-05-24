@@ -20,7 +20,6 @@ _SENSITIVE_NAME_MARKERS = (
     "APIKEY",
     "PRIVATE",
     "CREDENTIAL",
-    "AUTH",
 )
 
 
@@ -119,7 +118,10 @@ class AllConditions(CompoundCondition):
         return all_met, explanation
 
     async def acheck(self, context: dict[str, Any]) -> bool:
-        """Pass only if every child passes; awaits children sequentially, short-circuiting on first failure."""
+        """Pass only if every child passes.
+
+        Awaits children sequentially, short-circuiting on the first failure.
+        """
         for cond in self.conditions:
             if not await cond.acheck(context):
                 return False
@@ -149,7 +151,10 @@ class AnyCondition(CompoundCondition):
         return any_met, explanation
 
     async def acheck(self, context: dict[str, Any]) -> bool:
-        """Pass if any child passes; awaits children sequentially, short-circuiting on first success."""
+        """Pass if any child passes.
+
+        Awaits children sequentially, short-circuiting on the first success.
+        """
         for cond in self.conditions:
             if await cond.acheck(context):
                 return True

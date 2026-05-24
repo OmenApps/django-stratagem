@@ -615,3 +615,14 @@ class TestSensitiveValueRedaction:
         cond = EnvironmentCondition("DEPLOY_STAGE", "production")
         explanation = cond.explain()
         assert "production" in explanation
+
+    def test_auth_named_setting_is_not_redacted(self):
+        # "AUTH" is intentionally NOT a sensitive marker - it over-matches common
+        # non-secret settings like AUTH_USER_MODEL. Real secrets (AUTH_TOKEN) are
+        # still caught by the TOKEN/SECRET markers.
+        from django_stratagem.conditions import SettingCondition
+
+        cond = SettingCondition("AUTH_USER_MODEL", "auth.User")
+        explanation = cond.explain()
+        assert "auth.User" in explanation
+        assert "***redacted***" not in explanation
