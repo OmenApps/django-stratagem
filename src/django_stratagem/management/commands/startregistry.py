@@ -10,14 +10,19 @@ from django.core.management.base import BaseCommand, CommandError
 
 
 def _validate_identifier(value: str, label: str) -> None:
-    """Raise CommandError unless ``value`` is a safe Python identifier.
+    """Raise CommandError unless ``value`` is a safe, plain ASCII Python identifier.
 
     Guards against generating syntactically broken source (the value is
-    interpolated into class names and a module name) and against path
-    traversal (the module name is used as a filename).
+    interpolated into class names and a module name), path traversal (the module
+    name is used as a filename), surprising non-ASCII identifiers, and dunder
+    names that could clobber package files such as ``__init__``.
     """
     if not value.isidentifier() or keyword.iskeyword(value):
         raise CommandError(f"{label} must be a valid Python identifier, got {value!r}")
+    if not value.isascii():
+        raise CommandError(f"{label} must be ASCII, got {value!r}")
+    if value.startswith("__") and value.endswith("__"):
+        raise CommandError(f"{label} must not be a dunder name, got {value!r}")
 
 
 def to_snake(name: str) -> str:
@@ -92,9 +97,9 @@ def write_registry_files(
         (base / f"{module}.py", render_implementations_module(name)),
     ]
 
-    for path, _ in targets:
-        if path.exists() and not force:
-            raise CommandError(f"{path} already exists; pass --force to overwrite")
+    pre_existing = {path for path, _ in targets if path.exists()}
+    if pre_existing and not force:
+        raise CommandError(f"{sorted(str(p) for p in pre_existing)} already exists; pass --force to overwrite")
 
     written: list[Path] = []
     try:
@@ -102,10 +107,11 @@ def write_registry_files(
             path.write_text(content)
             written.append(path)
     except OSError as exc:
-        # Roll back any partial write so a failure does not leave a broken,
-        # half-scaffolded app directory behind.
+        # Roll back only files this command created, so a failed write never
+        # deletes a pre-existing file the caller asked to overwrite with --force.
         for path in written:
-            path.unlink(missing_ok=True)
+            if path not in pre_existing:
+                path.unlink(missing_ok=True)
         raise CommandError(f"Failed to write registry files: {exc}") from exc
     return written
 
@@ -135,6 +141,8 @@ class Command(BaseCommand):
         _validate_identifier(name, "name")
         module = options["module"] or f"{to_snake(name)}_implementations"
         _validate_identifier(module, "--module")
+        if module == "registry":
+            raise CommandError("--module 'registry' collides with the generated registry.py; choose another name")
 
         try:
             app_config = apps.get_app_config(app_label)

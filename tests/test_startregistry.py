@@ -129,6 +129,44 @@ def test_command_rejects_path_traversal_module(tmp_path, mocker):
     assert not (tmp_path.parent.parent / "evil.py").exists()
 
 
+def test_command_rejects_dunder_module(tmp_path, mocker):
+    from django.core.management import call_command
+    from django.core.management.base import CommandError
+
+    fake_config = mocker.Mock()
+    fake_config.path = str(tmp_path)
+    mocker.patch("django.apps.apps.get_app_config", return_value=fake_config)
+
+    # __init__ is a valid identifier but must be rejected: --force would clobber
+    # the package's __init__.py.
+    with pytest.raises(CommandError):
+        call_command("startregistry", "Notification", "--app", "anyapp", "--module", "__init__")
+    assert not (tmp_path / "__init__.py").exists()
+
+
+def test_command_rejects_registry_module_collision(tmp_path, mocker):
+    from django.core.management import call_command
+    from django.core.management.base import CommandError
+
+    fake_config = mocker.Mock()
+    fake_config.path = str(tmp_path)
+    mocker.patch("django.apps.apps.get_app_config", return_value=fake_config)
+
+    with pytest.raises(CommandError):
+        call_command("startregistry", "Notification", "--app", "anyapp", "--module", "registry")
+
+
+def test_command_rejects_non_ascii_name(mocker):
+    from django.core.management import call_command
+    from django.core.management.base import CommandError
+
+    mocker.patch("django.apps.apps.get_app_config", side_effect=AssertionError("should not be called"))
+
+    # "Café" is a valid Python identifier but not ASCII; reject it.
+    with pytest.raises(CommandError):
+        call_command("startregistry", "Café", "--app", "anyapp")
+
+
 def test_command_force_overwrites_via_cli(tmp_path, mocker):
     from django.core.management import call_command
     from django.core.management.base import CommandError
