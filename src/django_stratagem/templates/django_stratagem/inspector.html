@@ -15,11 +15,11 @@
     {% comment %}The admin chrome already renders the page title as an <h1> from the
     "title" context variable, so this block starts at <h2> to avoid a duplicate h1.{% endcomment %}
     {% for row in rows %}
-    <section class="registry-block">
-        <h2>{{ row.registry }}</h2>
+    <section class="registry-block" aria-labelledby="registry-{{ forloop.counter }}">
+        <h2 id="registry-{{ forloop.counter }}">{{ row.registry }}</h2>
         {% if row.doc %}<p class="registry-doc">{{ row.doc }}</p>{% endif %}
         <p class="registry-module"><code>{{ row.module }}</code></p>
-        <table>
+        <table aria-labelledby="registry-{{ forloop.counter }}">
             <thead>
                 <tr>
                     <th scope="col">Slug</th>
@@ -42,7 +42,7 @@
                         <span class="status-unavailable">unavailable</span>
                         {% endif %}
                     </td>
-                    <td><code>{{ impl.reason }}</code></td>
+                    <td><code>{{ impl.reason|default:"-" }}</code></td>
                 </tr>
                 {% endfor %}
             </tbody>

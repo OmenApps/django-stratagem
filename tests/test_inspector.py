@@ -166,3 +166,27 @@ def test_build_inspector_rows_reports_is_available_override(conditional_registry
     by_slug = {impl["slug"]: impl for impl in row["implementations"]}
     assert by_slug["premium_feature"]["available"] is False
     assert by_slug["basic_feature"]["available"] is True
+
+
+def test_build_inspector_rows_isolates_failing_display_name(test_strategy_registry, monkeypatch, caplog):
+    import logging
+
+    from django_stratagem.inspector import build_inspector_rows
+    from tests.registries_fixtures import TestStrategyRegistry
+
+    def boom(cls, implementation):
+        raise RuntimeError("name kaboom")
+
+    monkeypatch.setattr(TestStrategyRegistry, "get_display_name", classmethod(boom))
+
+    with caplog.at_level(logging.ERROR, logger="django_stratagem.inspector"):
+        rows = build_inspector_rows({})
+
+    row = next(r for r in rows if r["registry"] == "TestStrategyRegistry")
+    by_slug = {impl["slug"]: impl for impl in row["implementations"]}
+    # A display-name failure degrades to the slug and is logged, without
+    # affecting the availability column.
+    assert by_slug["email"]["name"] == "email"
+    assert by_slug["email"]["available"] is True
+    assert "kaboom" not in by_slug["email"]["name"]
+    assert any(record.exc_info for record in caplog.records)

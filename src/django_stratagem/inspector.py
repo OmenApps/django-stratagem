@@ -28,6 +28,10 @@ def build_inspector_rows(context: dict[str, Any] | None = None) -> list[dict[str
     that override it directly are reported accurately), then defaults to always
     available. A failing implementation is logged and reported as unavailable
     rather than crashing the page.
+
+    Rows are JSON-able and intended for reuse beyond the bundled template (e.g.
+    a custom view or API), so each implementation row also carries ``description``
+    and ``icon`` even though the default template does not render them.
     """
     context = context or {}
     rows: list[dict[str, Any]] = []
@@ -50,22 +54,24 @@ def build_inspector_rows(context: dict[str, Any] | None = None) -> list[dict[str
                 name = slug
 
             try:
-                # ``is_available`` is the authoritative gate (it is what the
-                # registry uses to filter implementations), so it determines
-                # availability. ``explain_availability`` only supplies a richer
-                # reason, and only when it agrees with the gate.
-                is_available = getattr(impl_class, "is_available", None)
-                available = bool(is_available(context)) if callable(is_available) else True
-
+                # Prefer ``explain_availability`` (rich reason) and use its
+                # boolean too - except when the implementation overrides only the
+                # sync ``is_available`` (then that override is authoritative, as
+                # in get_available_implementations). This evaluates the condition
+                # once per implementation rather than twice.
+                own = getattr(impl_class, "__dict__", {})
+                overrides_sync_only = "is_available" in own and "explain_availability" not in own
                 explain = getattr(impl_class, "explain_availability", None)
-                if callable(explain):
-                    explained_available, explained_reason = explain(context)
-                    if explained_available == available:
-                        reason = explained_reason
-                    else:
-                        reason = "Available" if available else "Unavailable"
+                if callable(explain) and not overrides_sync_only:
+                    available, reason = explain(context)
+                    available = bool(available)
                 else:
-                    reason = "Always available" if available else "Unavailable"
+                    is_available = getattr(impl_class, "is_available", None)
+                    if callable(is_available):
+                        available = bool(is_available(context))
+                        reason = "Available" if available else "Unavailable"
+                    else:
+                        available, reason = True, "Always available"
             except Exception:  # noqa: BLE001 - inspector must not crash on a flaky implementation
                 logger.exception("Inspector failed to evaluate availability for %s in %s", slug, registry.__name__)
                 # Keep the raw exception text out of the response to avoid leaking
@@ -99,9 +105,17 @@ def build_inspector_rows(context: dict[str, Any] | None = None) -> list[dict[str
 @staff_member_required
 def registry_inspector(request: HttpRequest) -> TemplateResponse:
     """Render the read-only registry inspector page for staff users."""
+    from django.contrib import admin
+
     context = {"request": request, "user": getattr(request, "user", None)}
     return TemplateResponse(
         request,
         "django_stratagem/inspector.html",
-        {"title": "Registry Inspector", "rows": build_inspector_rows(context)},
+        {
+            # each_context() supplies the admin chrome (user tools, nav sidebar,
+            # site header) that admin/base_site.html expects.
+            **admin.site.each_context(request),
+            "title": "Registry Inspector",
+            "rows": build_inspector_rows(context),
+        },
     )
