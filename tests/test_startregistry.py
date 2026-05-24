@@ -93,18 +93,83 @@ def test_command_errors_on_unknown_app(mocker):
         call_command("startregistry", "Notification", "--app", "missing")
 
 
+def test_to_snake_pins_acronym_behavior():
+    # The default --module name derives from to_snake(name), so pin the
+    # consecutive-capitals behavior to catch accidental regex changes.
+    from django_stratagem.management.commands.startregistry import to_snake
+
+    assert to_snake("APIGateway") == "api_gateway"
+    assert to_snake("HTTPSRequest") == "https_request"
+    assert to_snake("HTTPServer") == "http_server"
+
+
+def test_command_rejects_invalid_name(mocker):
+    from django.core.management import call_command
+    from django.core.management.base import CommandError
+
+    # get_app_config should never be reached; name validation fails first.
+    mocker.patch("django.apps.apps.get_app_config", side_effect=AssertionError("should not be called"))
+
+    with pytest.raises(CommandError):
+        call_command("startregistry", "Not a valid name", "--app", "anyapp")
+
+
+def test_command_rejects_path_traversal_module(tmp_path, mocker):
+    from django.core.management import call_command
+    from django.core.management.base import CommandError
+
+    fake_config = mocker.Mock()
+    fake_config.path = str(tmp_path)
+    mocker.patch("django.apps.apps.get_app_config", return_value=fake_config)
+
+    with pytest.raises(CommandError):
+        call_command("startregistry", "Notification", "--app", "anyapp", "--module", "../../evil")
+
+    # Nothing should have been written outside the target directory.
+    assert not (tmp_path.parent.parent / "evil.py").exists()
+
+
+def test_command_force_overwrites_via_cli(tmp_path, mocker):
+    from django.core.management import call_command
+    from django.core.management.base import CommandError
+
+    fake_config = mocker.Mock()
+    fake_config.path = str(tmp_path)
+    mocker.patch("django.apps.apps.get_app_config", return_value=fake_config)
+
+    call_command("startregistry", "Notification", "--app", "anyapp")
+    with pytest.raises(CommandError):
+        call_command("startregistry", "Notification", "--app", "anyapp")
+    # With --force the second run succeeds.
+    call_command("startregistry", "Notification", "--app", "anyapp", "--force")
+
+
+def test_command_default_module_name(tmp_path, mocker):
+    from django.core.management import call_command
+
+    fake_config = mocker.Mock()
+    fake_config.path = str(tmp_path)
+    mocker.patch("django.apps.apps.get_app_config", return_value=fake_config)
+
+    call_command("startregistry", "Notification", "--app", "anyapp")
+
+    assert (tmp_path / "notification_implementations.py").exists()
+
+
 def test_generated_code_imports_and_autoregisters(tmp_path, monkeypatch):
     """The generated registry/implementations modules import and auto-register.
 
     The command tests mock the app path and only check rendered strings, so this
     test guards that the actual generated source is valid Python that wires up
-    auto-registration end to end.
+    auto-registration end to end. ``isolate_registries`` rolls back the global
+    registry list so the generated ``GreetingRegistry`` does not leak.
     """
     import importlib
     import sys
 
     from django_stratagem.management.commands.startregistry import write_registry_files
     from django_stratagem.registry import Registry
+    from django_stratagem.testing import isolate_registries
 
     pkg = tmp_path / "generated_pkg"
     pkg.mkdir()
@@ -116,14 +181,15 @@ def test_generated_code_imports_and_autoregisters(tmp_path, monkeypatch):
         del sys.modules[mod]
 
     try:
-        registry_mod = importlib.import_module("generated_pkg.registry")
-        impl_mod = importlib.import_module("generated_pkg.greeting_implementations")
+        with isolate_registries():
+            registry_mod = importlib.import_module("generated_pkg.registry")
+            impl_mod = importlib.import_module("generated_pkg.greeting_implementations")
 
-        assert issubclass(registry_mod.GreetingRegistry, Registry)
-        assert registry_mod.GreetingRegistry.implementations_module == "greeting_implementations"
-        assert registry_mod.GreetingInterface.registry is registry_mod.GreetingRegistry
-        assert "default" in registry_mod.GreetingRegistry.implementations
-        assert impl_mod.DefaultGreeting().run() == "default"
+            assert issubclass(registry_mod.GreetingRegistry, Registry)
+            assert registry_mod.GreetingRegistry.implementations_module == "greeting_implementations"
+            assert registry_mod.GreetingInterface.registry is registry_mod.GreetingRegistry
+            assert "default" in registry_mod.GreetingRegistry.implementations
+            assert impl_mod.DefaultGreeting().run() == "default"
     finally:
         for mod in [m for m in sys.modules if m.startswith("generated_pkg")]:
             del sys.modules[mod]

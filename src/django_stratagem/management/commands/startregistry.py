@@ -2,10 +2,22 @@
 
 from __future__ import annotations
 
+import keyword
 import re
 from pathlib import Path
 
 from django.core.management.base import BaseCommand, CommandError
+
+
+def _validate_identifier(value: str, label: str) -> None:
+    """Raise CommandError unless ``value`` is a safe Python identifier.
+
+    Guards against generating syntactically broken source (the value is
+    interpolated into class names and a module name) and against path
+    traversal (the module name is used as a filename).
+    """
+    if not value.isidentifier() or keyword.iskeyword(value):
+        raise CommandError(f"{label} must be a valid Python identifier, got {value!r}")
 
 
 def to_snake(name: str) -> str:
@@ -85,9 +97,16 @@ def write_registry_files(
             raise CommandError(f"{path} already exists; pass --force to overwrite")
 
     written: list[Path] = []
-    for path, content in targets:
-        path.write_text(content)
-        written.append(path)
+    try:
+        for path, content in targets:
+            path.write_text(content)
+            written.append(path)
+    except OSError as exc:
+        # Roll back any partial write so a failure does not leave a broken,
+        # half-scaffolded app directory behind.
+        for path in written:
+            path.unlink(missing_ok=True)
+        raise CommandError(f"Failed to write registry files: {exc}") from exc
     return written
 
 
@@ -113,7 +132,9 @@ class Command(BaseCommand):
 
         name = options["name"]
         app_label = options["app"]
+        _validate_identifier(name, "name")
         module = options["module"] or f"{to_snake(name)}_implementations"
+        _validate_identifier(module, "--module")
 
         try:
             app_config = apps.get_app_config(app_label)
