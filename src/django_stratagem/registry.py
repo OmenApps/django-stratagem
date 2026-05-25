@@ -13,7 +13,7 @@ from django.utils import timezone
 from django.utils.module_loading import autodiscover_modules
 
 from .app_settings import get_cache_timeout
-from .exceptions import ImplementationNotFound
+from .exceptions import ImplementationNotFound, format_implementation_not_found
 from .signals import implementation_registered, implementation_unregistered, registry_reloaded
 from .utils import get_class, get_display_string, import_by_name, is_running_migrations
 
@@ -225,7 +225,7 @@ class Registry(Generic[TInterface], metaclass=RegistryMeta):
         """Unregister an implementation by its slug and emit signal."""
         if slug not in cls.implementations:
             logger.warning("Attempted to unregister missing slug '%s' from registry '%s'", slug, cls.__name__)
-            raise ImplementationNotFound(f"No implementation for slug '{slug}' to unregister")
+            raise ImplementationNotFound(format_implementation_not_found(cls.__name__, slug, list(cls.implementations)))
 
         meta = cls.implementations.pop(slug)
         cls.clear_cache()
@@ -311,7 +311,9 @@ class Registry(Generic[TInterface], metaclass=RegistryMeta):
             meta = cls.implementations.get(slug)
             if not meta:
                 logger.error("Requested slug '%s' not found in registry '%s'", slug, cls.__name__)
-                raise ImplementationNotFound(f"No implementation exists for slug '{slug}'")
+                raise ImplementationNotFound(
+                    format_implementation_not_found(cls.__name__, slug, list(cls.implementations))
+                )
             impl_class = cast("type[TInterface]", meta["klass"])
             return impl_class()
 
@@ -368,7 +370,9 @@ class Registry(Generic[TInterface], metaclass=RegistryMeta):
             meta = cls.implementations.get(slug)
             if not meta:
                 logger.error("Requested slug '%s' not found in registry '%s'", slug, cls.__name__)
-                raise ImplementationNotFound(f"No implementation exists for slug '{slug}'")
+                raise ImplementationNotFound(
+                    format_implementation_not_found(cls.__name__, slug, list(cls.implementations))
+                )
             return cast("type[TInterface]", meta["klass"])
 
         if fully_qualified_name:
@@ -383,7 +387,7 @@ class Registry(Generic[TInterface], metaclass=RegistryMeta):
         Raises ImplementationNotFound if the slug is not registered.
         """
         if slug not in cls.implementations:
-            raise ImplementationNotFound(f"No implementation registered for slug '{slug}'")
+            raise ImplementationNotFound(format_implementation_not_found(cls.__name__, slug, list(cls.implementations)))
         return cast("type[TInterface]", cls.implementations[slug]["klass"])
 
     @classmethod
@@ -393,7 +397,7 @@ class Registry(Generic[TInterface], metaclass=RegistryMeta):
         Raises ImplementationNotFound if the slug is not registered.
         """
         if slug not in cls.implementations:
-            raise ImplementationNotFound(f"No implementation registered for slug '{slug}'")
+            raise ImplementationNotFound(format_implementation_not_found(cls.__name__, slug, list(cls.implementations)))
         return cls.implementations[slug]
 
     @classmethod

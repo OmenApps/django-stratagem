@@ -1,5 +1,38 @@
+import difflib
+
+_DOCS_URL = "https://django-stratagem.readthedocs.io/en/latest/"
+
+
+def format_implementation_not_found(registry_name: str, slug: str, available_slugs: list[str]) -> str:
+    """Build a friendly multi-line message for a missing registry slug.
+
+    Includes the closest available slug (via ``difflib``), the full list of
+    registered slugs, and a documentation link, so a typo or stale reference
+    becomes a self-service fix instead of a dead-end lookup.
+    """
+    lines = [f"No implementation registered for slug '{slug}' in registry '{registry_name}'."]
+    if available_slugs:
+        matches = difflib.get_close_matches(slug, available_slugs, n=1)
+        if matches:
+            lines.append(f"Did you mean '{matches[0]}'?")
+        lines.append(f"Available slugs: {', '.join(sorted(available_slugs))}.")
+    else:
+        lines.append("No implementations are registered in this registry yet.")
+    lines.append(f"See {_DOCS_URL} for help.")
+    return "\n".join(lines)
+
+
 class ImplementationNotFound(KeyError):
     """Raised when an implementation is not found in the registry."""
+
+    def __str__(self) -> str:
+        # KeyError.__str__ wraps its message in repr() quotes and escapes
+        # newlines, which mangles the multi-line "did you mean" guidance.
+        # Return the first arg verbatim so the message renders cleanly while
+        # the class stays a KeyError for existing callers/except clauses.
+        if self.args:
+            return str(self.args[0])
+        return super().__str__()
 
 
 class RegistryNameError(ValueError):

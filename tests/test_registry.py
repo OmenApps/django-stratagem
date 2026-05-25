@@ -120,3 +120,35 @@ class TestValidateImplementationStringInterface:
 
         with pytest.raises(TypeError, match="must inherit from"):
             StringInterfaceRegistry.register(NotASubclass)
+
+
+class TestFriendlySlugErrors:
+    """Slug-not-found errors include suggestions, available slugs, and a doc link."""
+
+    def test_get_suggests_closest_slug(self, test_strategy_registry):
+        with pytest.raises(ImplementationNotFound) as excinfo:
+            test_strategy_registry.get(slug="emai")
+        message = str(excinfo.value)
+        assert "Did you mean 'email'?" in message
+        assert "Available slugs: email, push, sms." in message
+        assert "https://django-stratagem.readthedocs.io" in message
+
+    def test_get_class_includes_available_slugs(self, test_strategy_registry):
+        with pytest.raises(ImplementationNotFound) as excinfo:
+            test_strategy_registry.get_class(slug="nope")
+        assert "Available slugs: email, push, sms." in str(excinfo.value)
+
+    def test_get_implementation_class_includes_available_slugs(self, test_strategy_registry):
+        with pytest.raises(ImplementationNotFound) as excinfo:
+            test_strategy_registry.get_implementation_class("nope")
+        assert "Available slugs: email, push, sms." in str(excinfo.value)
+
+    def test_get_implementation_meta_includes_available_slugs(self, test_strategy_registry):
+        with pytest.raises(ImplementationNotFound) as excinfo:
+            test_strategy_registry.get_implementation_meta("nope")
+        assert "Available slugs: email, push, sms." in str(excinfo.value)
+
+    def test_unregister_missing_slug_includes_available_slugs(self, test_strategy_registry):
+        with pytest.raises(ImplementationNotFound) as excinfo:
+            test_strategy_registry.unregister("nope")
+        assert "Available slugs: email, push, sms." in str(excinfo.value)

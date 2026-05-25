@@ -10,6 +10,7 @@ from django_stratagem.exceptions import (
     RegistryClassError,
     RegistryImportError,
     RegistryNameError,
+    format_implementation_not_found,
 )
 
 
@@ -35,6 +36,13 @@ class TestImplementationNotFound:
         """Test can be caught as KeyError."""
         with pytest.raises(KeyError):
             raise ImplementationNotFound("test")
+
+    def test_str_does_not_add_keyerror_quotes(self):
+        """A multi-line message renders verbatim, not repr()-quoted/escaped."""
+        msg = "No implementation registered for slug 'x'.\nDid you mean 'y'?"
+        exc = ImplementationNotFound(msg)
+        assert str(exc) == msg
+        assert "\\n" not in str(exc)
 
 
 class TestRegistryNameError:
@@ -344,6 +352,27 @@ class TestExceptionStrOutput:
         msg = f"Error occurred: {exc}"
         assert "bad_name" in msg
         assert msg != "Error occurred: "
+
+
+class TestFormatImplementationNotFound:
+    """Tests for the friendly slug-not-found message formatter."""
+
+    def test_suggests_closest_slug(self):
+        msg = format_implementation_not_found("NotifyRegistry", "emai", ["email", "sms", "push"])
+        assert "No implementation registered for slug 'emai' in registry 'NotifyRegistry'." in msg
+        assert "Did you mean 'email'?" in msg
+        assert "Available slugs: email, push, sms." in msg
+        assert "https://django-stratagem.readthedocs.io" in msg
+
+    def test_no_close_match_omits_suggestion(self):
+        msg = format_implementation_not_found("NotifyRegistry", "zzzzz", ["email", "sms"])
+        assert "Did you mean" not in msg
+        assert "Available slugs: email, sms." in msg
+
+    def test_empty_registry_message(self):
+        msg = format_implementation_not_found("NotifyRegistry", "email", [])
+        assert "No implementations are registered in this registry yet." in msg
+        assert "Did you mean" not in msg
 
 
 class TestExceptionEdgeCases:
