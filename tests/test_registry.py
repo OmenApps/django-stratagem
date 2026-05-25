@@ -152,3 +152,65 @@ class TestFriendlySlugErrors:
         with pytest.raises(ImplementationNotFound) as excinfo:
             test_strategy_registry.unregister("nope")
         assert "Available slugs: email, push, sms." in str(excinfo.value)
+
+
+class TestRegistryRepr:
+    """Registry classes have a legible repr for shell/REPL debugging."""
+
+    def test_repr_lists_slugs(self, test_strategy_registry):
+        text = repr(test_strategy_registry)
+        assert "TestStrategyRegistry" in text
+        assert "3 implementation" in text
+        assert "email" in text
+
+    def test_repr_of_empty_registry(self):
+        class EmptyReprRegistry(Registry):
+            implementations_module = "empty_repr_impls"
+
+        assert "0 implementation" in repr(EmptyReprRegistry)
+
+    def test_interface_instance_repr_shows_slug(self, test_strategy_registry):
+        instance = test_strategy_registry.get(slug="email")
+        assert "EmailStrategy" in repr(instance)
+        assert "email" in repr(instance)
+
+
+class TestRegistryDescribe:
+    """describe() returns a human-readable multi-line dump for the shell."""
+
+    def test_describe_lists_implementations(self, test_strategy_registry):
+        text = test_strategy_registry.describe()
+        assert "TestStrategyRegistry" in text
+        assert "email" in text
+        assert "Email Strategy" in text  # display name via label_attribute
+        assert "\n" in text  # multi-line
+
+    def test_describe_empty_registry(self):
+        class EmptyDescribeRegistry(Registry):
+            implementations_module = "empty_describe_impls"
+
+        text = EmptyDescribeRegistry.describe()
+        assert "EmptyDescribeRegistry" in text
+        assert "0 implementation" in text
+
+
+class TestRegistryExplainAvailability:
+    """explain_availability surfaces condition reasoning to developers."""
+
+    def test_basic_feature_always_available(self, conditional_registry):
+        available, reason = conditional_registry.explain_availability("basic_feature")
+        assert available is True
+        assert isinstance(reason, str) and reason
+
+    def test_premium_feature_gated_by_context(self, conditional_registry, premium_user, basic_user):
+        # PremiumFeature overrides only the sync is_available, so that override
+        # is authoritative for the (un)available decision.
+        available_premium, _ = conditional_registry.explain_availability("premium_feature", {"user": premium_user})
+        available_basic, _ = conditional_registry.explain_availability("premium_feature", {"user": basic_user})
+        assert available_premium is True
+        assert available_basic is False
+
+    def test_missing_slug_raises_friendly_error(self, conditional_registry):
+        with pytest.raises(ImplementationNotFound) as excinfo:
+            conditional_registry.explain_availability("nope")
+        assert "Available slugs" in str(excinfo.value)

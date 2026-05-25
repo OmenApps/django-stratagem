@@ -13,6 +13,7 @@ from django.utils import timezone
 from django.utils.module_loading import autodiscover_modules
 
 from .app_settings import get_cache_timeout
+from .availability import evaluate_availability
 from .exceptions import ImplementationNotFound, format_implementation_not_found
 from .signals import implementation_registered, implementation_unregistered, registry_reloaded
 from .utils import get_class, get_display_string, import_by_name, is_running_migrations
@@ -114,6 +115,11 @@ class RegistryMeta(type):
 
     def __bool__(cls):
         return True  # Registry classes are always truthy, even when empty
+
+    def __repr__(cls):
+        impls = getattr(cls, "implementations", {})
+        slugs = ", ".join(impls)
+        return f"<{cls.__name__}: {len(impls)} implementation(s) [{slugs}]>"
 
 
 class Registry(Generic[TInterface], metaclass=RegistryMeta):
@@ -482,6 +488,30 @@ class Registry(Generic[TInterface], metaclass=RegistryMeta):
         import_by_name.cache_clear()
         for reg in django_stratagem_registry:
             reg.clear_cache()
+
+    @classmethod
+    def describe(cls) -> str:
+        """Return a human-readable multi-line summary of this registry.
+
+        Intended for interactive debugging in the Django shell/REPL.
+        """
+        lines = [f"{cls.__name__} - {len(cls.implementations)} implementation(s)"]
+        for slug, meta in sorted(cls.implementations.items(), key=lambda item: item[1].get("priority", 0)):
+            impl_class = meta["klass"]
+            name = cls.get_display_name(cast("type[Interface]", impl_class)) if impl_class else slug
+            lines.append(f"  {slug}: {name} (priority {meta.get('priority', 0)})")
+        return "\n".join(lines)
+
+    @classmethod
+    def explain_availability(cls, slug: str, context: dict[str, Any] | None = None) -> tuple[bool, str]:
+        """Return ``(available, reason)`` for a registered slug in ``context``.
+
+        Resolves the slug (raising a friendly ``ImplementationNotFound`` if
+        unknown) and delegates to the shared availability helper, so developers
+        get the same reasoning the inspector shows - without the admin UI.
+        """
+        impl_class = cls.get_class(slug=slug)
+        return evaluate_availability(impl_class, context)
 
     @classmethod
     @skip_during_migrations

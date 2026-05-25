@@ -32,6 +32,9 @@ class Interface:
         logger.debug("Registering implementation %s in %s", cls.__name__, registry_cls.__name__)
         registry_cls.register(cls)
 
+    def __repr__(self) -> str:
+        return f"<{type(self).__name__} slug={getattr(self, 'slug', None)!r}>"
+
 
 class HierarchicalInterface(Interface):
     """Interface that can specify parent requirements."""
