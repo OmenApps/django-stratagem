@@ -330,3 +330,49 @@ class TestManagementCommandEdgeCases:
         assert out2.getvalue()
         # list_registries now has a registry with implementations
         assert out3.getvalue()
+
+
+class TestStratagemDoctorCommand:
+    """Tests for the stratagem_doctor diagnostics command."""
+
+    def test_runs_and_reports_registries(self, test_strategy_registry):
+        out = StringIO()
+        call_command("stratagem_doctor", stdout=out)
+        output = out.getvalue()
+        assert "TestStrategyRegistry" in output
+        assert "email" in output
+
+    def test_json_format_is_valid(self, test_strategy_registry):
+        import json
+
+        out = StringIO()
+        call_command("stratagem_doctor", format="json", stdout=out)
+        data = json.loads(out.getvalue())
+        assert "registries" in data
+        assert "errors" in data
+        assert isinstance(data["registries"], list)
+
+    def test_broken_klass_is_reported_and_raises(self, test_strategy_registry):
+        from django.core.management.base import CommandError
+
+        # Simulate an unimportable implementation (klass left as None). The
+        # autouse conftest fixture restores implementations after the test.
+        test_strategy_registry.implementations["broken"] = {
+            "klass": None,
+            "description": "",
+            "icon": "",
+            "priority": 0,
+        }
+
+        out = StringIO()
+        err = StringIO()
+        with pytest.raises(CommandError):
+            call_command("stratagem_doctor", stdout=out, stderr=err)
+        assert "broken" in (out.getvalue() + err.getvalue())
+
+    def test_healthy_run_does_not_raise(self, test_strategy_registry):
+        # No broken entries -> command completes normally (no CommandError) and
+        # reports the healthy summary line.
+        out = StringIO()
+        call_command("stratagem_doctor", stdout=out)
+        assert "No errors found." in out.getvalue()
