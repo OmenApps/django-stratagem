@@ -193,6 +193,18 @@ class TestRegistryDescribe:
         assert "EmptyDescribeRegistry" in text
         assert "0 implementation" in text
 
+    def test_describe_handles_missing_klass(self, test_strategy_registry):
+        # A None klass (partially deregistered/unimportable entry) falls back to
+        # the slug instead of crashing. Conftest restores implementations after.
+        test_strategy_registry.implementations["broken"] = {
+            "klass": None,
+            "description": "",
+            "icon": "",
+            "priority": 0,
+        }
+        text = test_strategy_registry.describe()
+        assert "broken" in text
+
 
 class TestRegistryExplainAvailability:
     """explain_availability surfaces condition reasoning to developers."""

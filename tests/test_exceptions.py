@@ -44,6 +44,11 @@ class TestImplementationNotFound:
         assert str(exc) == msg
         assert "\\n" not in str(exc)
 
+    def test_str_with_no_args_falls_back_to_keyerror(self):
+        """With no args, __str__ delegates to KeyError without crashing."""
+        exc = ImplementationNotFound()
+        assert isinstance(str(exc), str)
+
 
 class TestRegistryNameError:
     """Tests for RegistryNameError exception."""

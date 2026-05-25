@@ -376,3 +376,55 @@ class TestStratagemDoctorCommand:
         out = StringIO()
         call_command("stratagem_doctor", stdout=out)
         assert "No errors found." in out.getvalue()
+
+    def test_folds_in_system_checks_serious_and_warning(self, test_strategy_registry, mocker):
+        # A serious system check becomes an error (non-zero exit); a warning-level
+        # check becomes a warning. Patch run_checks where the command imports it.
+        from django.core.checks import Error
+        from django.core.checks import Warning as CheckWarning
+        from django.core.management.base import CommandError
+
+        mocker.patch(
+            "django_stratagem.management.commands.stratagem_doctor.run_checks",
+            return_value=[
+                Error("bad config", id="django_stratagem.E999"),
+                CheckWarning("minor concern", id="django_stratagem.W999"),
+            ],
+        )
+        out = StringIO()
+        err = StringIO()
+        with pytest.raises(CommandError):
+            call_command("stratagem_doctor", stdout=out, stderr=err)
+        combined = out.getvalue() + err.getvalue()
+        assert "E999" in combined
+        assert "W999" in combined
+
+    def test_warning_only_system_check_does_not_raise(self, test_strategy_registry, mocker):
+        # A warning-level check alone yields no errors, so the command exits 0
+        # and the finding appears in the JSON warnings list.
+        import json
+
+        from django.core.checks import Warning as CheckWarning
+
+        mocker.patch(
+            "django_stratagem.management.commands.stratagem_doctor.run_checks",
+            return_value=[CheckWarning("just a warning", id="django_stratagem.W998")],
+        )
+        out = StringIO()
+        call_command("stratagem_doctor", format="json", stdout=out)
+        data = json.loads(out.getvalue())
+        assert data["errors"] == []
+        assert any("W998" in warning for warning in data["warnings"])
+
+    def test_empty_registry_is_warned(self, test_strategy_registry):
+        # A registry with no implementations is reported as a warning (not an
+        # error), so the command still exits 0. Conftest rolls back the new
+        # registry after the test.
+        class EmptyDoctorRegistry(Registry):
+            implementations_module = "empty_doctor_impls"
+
+        out = StringIO()
+        call_command("stratagem_doctor", stdout=out)
+        output = out.getvalue()
+        assert "EmptyDoctorRegistry" in output
+        assert "no implementations" in output.lower()
