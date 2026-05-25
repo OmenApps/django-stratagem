@@ -34,8 +34,12 @@ project uses CalVer.
 - `get_available_implementations` now skips entries whose implementation class
   is `None`, consistent with the async path.
 
-### Notes
+## [2026.5.2]
 
-- This remains a beta series (`2026.2.1bN`). When cutting the first stable
-  release, bump the version, update the `Development Status` classifier, and move
-  the entries above under a dated release heading.
+### Fixed
+
+- `RegistryDescriptionWidget` now links its `<select>` to the description
+  container via `aria-describedby`, so screen-reader users perceive the
+  selected implementation's description on focus (previously visible only to
+  sighted users). The existing `aria-live` region continues to announce the
+  description when the selection changes.
