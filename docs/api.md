@@ -767,3 +767,49 @@ System check function registered under tag `django_stratagem`.
 | `E002` | Error | Model field `registry` is not a Registry subclass |
 | `W001` | Warning | Hierarchical registry parent not in global registry |
 | `W002` | Warning | Field registry not in global registry |
+
+---
+
+## Diagnostics: `stratagem_doctor`
+
+A read-only management command that runs a health check across every registry:
+
+```bash
+python manage.py stratagem_doctor
+python manage.py stratagem_doctor --format json
+```
+
+It reports each registry's implementations, flags registries with no
+implementations and slugs whose implementation class failed to load
+(`klass` is `None`), and folds in the `django_stratagem` system checks. It
+exits non-zero when any error-level finding exists, so it can gate CI.
+
+---
+
+## Debugging availability
+
+`Registry.explain_availability(slug, context=None)` returns
+`(available, reason)` for a registered slug, surfacing the same condition
+reasoning the admin inspector shows - from the shell, with no UI:
+
+```python
+>>> NotificationRegistry.explain_availability("premium", {"user": request.user})
+(False, "PermissionCondition(app.premium) -> failed")
+```
+
+An unknown slug raises `ImplementationNotFound` with the available slugs and a
+"did you mean?" suggestion.
+
+`Registry.describe()` returns a multi-line summary of a registry for
+interactive use:
+
+```python
+>>> print(NotificationRegistry.describe())
+NotificationRegistry - 3 implementation(s)
+  email: Email (priority 10)
+  sms: SMS (priority 20)
+  push: Push (priority 30)
+```
+
+Registry classes and `Interface` instances also have legible `repr()` output
+(for example `<NotificationRegistry: 3 implementation(s) [email, sms, push]>`).

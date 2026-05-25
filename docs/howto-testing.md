@@ -47,6 +47,56 @@ def _isolate_stratagem():
         yield
 ```
 
+## Assert registry state
+
+`django_stratagem.testing` ships assertion helpers so tests read clearly and
+fail with useful messages:
+
+```python
+from django_stratagem.testing import (
+    assert_available,
+    assert_choices,
+    assert_not_available,
+    assert_not_registered,
+    assert_registered,
+)
+
+from myapp.registry import NotificationRegistry
+from myapp.channels import WebhookChannel
+
+
+def test_registry_state():
+    assert_registered(NotificationRegistry, "email")
+    assert_not_registered(NotificationRegistry, "carrier_pigeon")
+    # Choice slugs in priority order:
+    assert_choices(NotificationRegistry, ["email", "sms", "push"])
+    assert_available(WebhookChannel, {"user": some_user})
+    assert_not_available(WebhookChannel, {})
+```
+
+A failing `assert_registered` lists the registry's currently registered slugs,
+so a typo is easy to spot.
+
+## Pytest plugin
+
+Installing django-stratagem registers a `pytest11` plugin via its entry point,
+so the `stratagem_isolation` fixture is available with no conftest wiring.
+Request it in any test that defines or mutates registries:
+
+```python
+def test_with_isolated_registries(stratagem_isolation):
+    class TempChannel(NotificationInterface):
+        slug = "temp"
+
+    NotificationRegistry.register(TempChannel)
+    assert_registered(NotificationRegistry, "temp")
+    # The registration is rolled back automatically when the test ends.
+```
+
+The fixture is opt-in (never autouse), so suites that intentionally mutate
+global registry state are unaffected unless they request it. It is the shipped
+equivalent of the hand-written `isolate_registries` fixture shown above.
+
 ## Notes and limitations
 
 - `temporary_implementation` restores a registry's *implementations*, not
