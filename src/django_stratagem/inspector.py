@@ -9,6 +9,7 @@ from django.contrib.admin.views.decorators import staff_member_required
 from django.http import HttpRequest
 from django.template.response import TemplateResponse
 
+from .availability import evaluate_availability
 from .registry import django_stratagem_registry
 
 logger = logging.getLogger(__name__)
@@ -54,24 +55,7 @@ def build_inspector_rows(context: dict[str, Any] | None = None) -> list[dict[str
                 name = slug
 
             try:
-                # Prefer ``explain_availability`` (rich reason) and use its
-                # boolean too - except when the implementation overrides only the
-                # sync ``is_available`` (then that override is authoritative, as
-                # in get_available_implementations). This evaluates the condition
-                # once per implementation rather than twice.
-                own = getattr(impl_class, "__dict__", {})
-                overrides_sync_only = "is_available" in own and "explain_availability" not in own
-                explain = getattr(impl_class, "explain_availability", None)
-                if callable(explain) and not overrides_sync_only:
-                    available, reason = explain(context)
-                    available = bool(available)
-                else:
-                    is_available = getattr(impl_class, "is_available", None)
-                    if callable(is_available):
-                        available = bool(is_available(context))
-                        reason = "Available" if available else "Unavailable"
-                    else:
-                        available, reason = True, "Always available"
+                available, reason = evaluate_availability(impl_class, context)
             except Exception:  # noqa: BLE001 - inspector must not crash on a flaky implementation
                 logger.exception("Inspector failed to evaluate availability for %s in %s", slug, registry.__name__)
                 # Keep the raw exception text out of the response to avoid leaking
