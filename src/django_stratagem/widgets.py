@@ -46,6 +46,23 @@ class RegistryDescriptionWidget(RegistryWidget):
     def get_context(self, name, value, attrs):
         context = super().get_context(name, value, attrs)
         context["widget"]["description_attrs"] = self.description_attrs
+
+        # Associate the description container with the <select> so assistive
+        # technology announces the description on focus, regardless of whether
+        # the aria-live region has fired. The container id mirrors the template:
+        # "{select_id}-registry-description". The container's visible content is
+        # populated by registry_description.js (on load and on change); this
+        # attribute makes that content programmatically associated with the
+        # control. aria-describedby is a space-separated token list, so we merge
+        # against any pre-existing value (e.g. form help text), collapsing
+        # whitespace and avoiding a duplicate id.
+        widget_id = context["widget"]["attrs"].get("id")
+        if widget_id:
+            description_id = f"{widget_id}-registry-description"
+            tokens = context["widget"]["attrs"].get("aria-describedby", "").split()
+            if description_id not in tokens:
+                tokens.append(description_id)
+            context["widget"]["attrs"]["aria-describedby"] = " ".join(tokens)
         return context
 
 

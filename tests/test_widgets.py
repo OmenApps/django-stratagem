@@ -257,6 +257,26 @@ class TestRegistryDescriptionWidget:
         html = widget.render("backend", "email", attrs={"id": "id_backend"})
         assert "margin-top: 0.25rem;" in html
 
+    def test_get_context_links_select_to_description_via_aria_describedby(self, test_registry):
+        """The <select> must reference its description container with aria-describedby."""
+        widget = RegistryDescriptionWidget(choices=[("email", "Email Strategy")], registry=test_registry)
+        context = widget.get_context("backend", "email", {"id": "id_backend"})
+        assert context["widget"]["attrs"]["aria-describedby"] == "id_backend-registry-description"
+
+    def test_get_context_preserves_existing_aria_describedby(self, test_registry):
+        """An existing aria-describedby (e.g. form help text) is preserved, not clobbered."""
+        widget = RegistryDescriptionWidget(choices=[("email", "Email Strategy")], registry=test_registry)
+        context = widget.get_context(
+            "backend", "email", {"id": "id_backend", "aria-describedby": "id_backend_helptext"}
+        )
+        assert context["widget"]["attrs"]["aria-describedby"] == "id_backend_helptext id_backend-registry-description"
+
+    def test_get_context_without_id_does_not_add_aria_describedby(self, test_registry):
+        """If the select has no id, no dangling aria-describedby is emitted."""
+        widget = RegistryDescriptionWidget(choices=[("email", "Email Strategy")], registry=test_registry)
+        context = widget.get_context("backend", "email", {})
+        assert "aria-describedby" not in context["widget"]["attrs"]
+
 
 class TestFormfieldShowDescription:
     """Tests for the show_description parameter on formfield()."""
