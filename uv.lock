@@ -404,7 +404,7 @@ wheels = [
 
 [[package]]
 name = "django-stratagem"
-version = "2026.5.1"
+version = "2026.5.3"
 source = { editable = "." }
 dependencies = [
     { name = "asgiref" },
