@@ -44,6 +44,9 @@ waffle = [
     "django-waffle>=4.0",
 ]
 
+[project.entry-points.pytest11]
+django_stratagem = "django_stratagem.pytest_plugin"
+
 [project.urls]
 Homepage = "https://github.com/OmenApps/django-stratagem"
 Documentation = "https://django-stratagem.readthedocs.io/en/latest/"

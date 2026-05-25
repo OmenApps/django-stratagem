@@ -7,7 +7,7 @@ state so tests stay isolated without hand-written setup/teardown.
 from __future__ import annotations
 
 import copy
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
 
@@ -85,3 +85,41 @@ def isolate_registries() -> Iterator[None]:
             registry.implementations.clear()
             registry.implementations.update(impls)
             registry.clear_cache()
+
+
+def assert_registered(registry: type[Registry], slug: str) -> None:
+    """Assert ``slug`` is registered in ``registry``."""
+    if slug not in registry.implementations:
+        registered = ", ".join(sorted(registry.implementations)) or "(none)"
+        raise AssertionError(
+            f"Expected slug '{slug}' to be registered in {registry.__name__}. Registered: {registered}."
+        )
+
+
+def assert_not_registered(registry: type[Registry], slug: str) -> None:
+    """Assert ``slug`` is not registered in ``registry``."""
+    if slug in registry.implementations:
+        raise AssertionError(f"Expected slug '{slug}' NOT to be registered in {registry.__name__}, but it is.")
+
+
+def assert_available(implementation: type[Any], context: dict[str, Any] | None = None) -> None:
+    """Assert ``implementation.is_available(context)`` is truthy (or has no condition)."""
+    is_available = getattr(implementation, "is_available", None)
+    available = bool(is_available(context)) if callable(is_available) else True
+    if not available:
+        raise AssertionError(f"Expected {implementation.__name__} to be available for context {context!r}.")
+
+
+def assert_not_available(implementation: type[Any], context: dict[str, Any] | None = None) -> None:
+    """Assert ``implementation.is_available(context)`` is falsy."""
+    is_available = getattr(implementation, "is_available", None)
+    available = bool(is_available(context)) if callable(is_available) else True
+    if available:
+        raise AssertionError(f"Expected {implementation.__name__} to be unavailable for context {context!r}.")
+
+
+def assert_choices(registry: type[Registry], expected_slugs: Sequence[str]) -> None:
+    """Assert the registry's choice slugs equal ``expected_slugs`` in order."""
+    actual = [slug for slug, _label in registry.get_choices()]
+    if actual != list(expected_slugs):
+        raise AssertionError(f"Expected choice slugs {list(expected_slugs)!r} but got {actual!r}.")
